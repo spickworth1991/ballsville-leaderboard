@@ -28,8 +28,4 @@ bucket_name = "leaderboard-data"
 # You can leave this out if you prefer to set it only in the Pages UI
 ADMIN_TOKEN = "dev-only-token"
 
-# ===== Cron triggers =====
-# This registers a scheduled event on the worker that backs your Pages Functions.
-# We still only *run* when the KV schedule window matches (see [[scheduled]].js).
-[triggers]
-crons = ["0 * * * *"]  # every hour
+
