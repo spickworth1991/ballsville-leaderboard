@@ -25,7 +25,6 @@ bucket_name = "leaderboard-data"
 
 # Environment vars (handy for local dev; in Cloudflare Pages UI you can also set them)
 [vars]
-# You can leave this out if you prefer to set it only in the Pages UI
-ADMIN_TOKEN = "dev-only-token"
+
 
 
