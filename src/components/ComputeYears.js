@@ -8,7 +8,7 @@
  * @param {number} defaultMinSize - fallback if mode not in perModeMinSizes
  * @returns {{ totalTeams: number, uniqueOwners: number }}
  */
-export function computeYearStats(yearBlock, perModeMinSizes = {}, defaultMinSize = 12) {
+export function computeYearStats(yearBlock, perModeMinSizes = {}, defaultMinSize = 10) {
   if (!yearBlock) return { totalTeams: 0, uniqueOwners: 0 };
 
   let totalTeams = 0;
