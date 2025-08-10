@@ -1,5 +1,5 @@
 // src/pages/admin/index.js
-export const config = { runtime: 'edge' };
+export const config = { runtime: 'experimental-edge' };
 
 import { getRequestContext } from '@cloudflare/next-on-pages';
 import { verifySession } from '../../lib/auth';
