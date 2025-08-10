@@ -1,5 +1,5 @@
 // src/pages/admin/index.js
-export const config = { runtime: 'edge' };
+export const config = { runtime: 'experimental-edge' };
 
 import { useEffect, useRef, useState } from "react";
 import { verifySession } from "../../lib/auth";
