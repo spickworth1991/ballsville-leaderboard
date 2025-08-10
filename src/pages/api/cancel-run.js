@@ -1,9 +1,11 @@
 export const config = { runtime: 'edge' };
+import { getRequestContext } from '@cloudflare/next-on-pages';
 
 import { getRun, cancelRun } from '../../lib/run-state';
 import { verifySession } from '../../lib/auth';
 
 export async function onRequestPost({ request, env }) {
+  const { env } = getRequestContext();
   const user = await verifySession(env, request.headers.get("cookie") || "");
   const auth = request.headers.get("authorization") || "";
   const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";

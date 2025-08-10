@@ -1,4 +1,6 @@
- export const config = { runtime: 'edge' };
+export const config = { runtime: 'edge' };
+import { getRequestContext } from '@cloudflare/next-on-pages';
+
 
  import { generateAll } from "../../lib/generate";
  import { verifySession } from "../../lib/auth";

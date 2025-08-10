@@ -1,6 +1,10 @@
 export const config = { runtime: 'edge' };
+import { getRequestContext } from '@cloudflare/next-on-pages';
+
 
 export async function onRequestGet(context) {
+  const { env } = getRequestContext();
+
   const { LEADERBOARDS } = context.env;
 
   try {
@@ -15,6 +19,8 @@ export async function onRequestGet(context) {
 }
 
 export async function onRequestPost(context) {
+  const { env } = getRequestContext();
+
   const { LEADERBOARDS } = context.env;
 
   try {
