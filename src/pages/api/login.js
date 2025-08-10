@@ -1,11 +1,9 @@
 export const config = { runtime: 'edge' };
-import { getRequestContext } from '@cloudflare/next-on-pages';
 
 import { createSessionCookie } from '../../lib/auth';
 
 
 export async function onRequestPost({ request, env }) {
-  const { env } = getRequestContext();
   const { username, password } = await request.json().catch(() => ({}));
   if (!username || !password) return new Response("Bad Request", { status: 400 });
 

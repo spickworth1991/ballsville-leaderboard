@@ -1,11 +1,7 @@
 export const config = { runtime: 'edge' };
-import { getRequestContext } from '@cloudflare/next-on-pages';
-
 
 // GET returns the current schedule from KV
 export async function onRequestGet({ env }) {
-  const { env } = getRequestContext();
-
   const raw = await env.CONFIG_KV.get("schedule");
   const fallback = { hourUTC: 7, minuteUTC: 0, enabled: true };
   return new Response(raw ?? JSON.stringify(fallback), {
@@ -16,8 +12,6 @@ export async function onRequestGet({ env }) {
 // POST saves a new schedule to KV (auth: cookie "admin=1" OR Bearer ADMIN_TOKEN)
 export async function onRequestPost({ request, env }) {
   const auth = request.headers.get("authorization") || "";
-  const { env } = getRequestContext();
-
   const cookie = request.headers.get("cookie") || "";
   const hasCookie = /\badmin=1\b/.test(cookie);
   const hasBearer = env.ADMIN_TOKEN && auth === `Bearer ${env.ADMIN_TOKEN}`;
