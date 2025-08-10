@@ -1,3 +1,5 @@
+export const config = { runtime: 'edge' };
+
 export async function onRequestGet(context) {
   const { LEADERBOARDS } = context.env;
 

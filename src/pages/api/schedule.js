@@ -1,3 +1,5 @@
+export const config = { runtime: 'edge' };
+
 // GET returns the current schedule from KV
 export async function onRequestGet({ env }) {
   const raw = await env.CONFIG_KV.get("schedule");

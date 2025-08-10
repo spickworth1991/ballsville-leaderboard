@@ -1,4 +1,6 @@
 // src/pages/admin/index.js
+export const config = { runtime: 'edge' };
+
 import { useEffect, useRef, useState } from "react";
 import { verifySession } from "../../lib/auth";
 

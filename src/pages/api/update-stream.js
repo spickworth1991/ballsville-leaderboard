@@ -1,3 +1,5 @@
+ export const config = { runtime: 'edge' };
+
  import { generateAll } from "../../lib/generate";
  import { verifySession } from "../../lib/auth";
  import { createRun, getRun, endRun } from "../../lib/run-state";
