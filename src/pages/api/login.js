@@ -1,4 +1,4 @@
-import { createSessionCookie } from "../_lib/auth";
+import { createSessionCookie } from '../../lib/auth';
 
 export async function onRequestPost({ request, env }) {
   const { username, password } = await request.json().catch(() => ({}));

@@ -1,5 +1,5 @@
-import { cancelRun, getRun } from "../_lib/run-state";
-import { verifySession } from "../_lib/auth";
+import { getRun, cancelRun } from '../../lib/run-state';
+import { verifySession } from '../../lib/auth';
 
 export async function onRequestPost({ request, env }) {
   const user = await verifySession(env, request.headers.get("cookie") || "");

@@ -1,5 +1,5 @@
-import { generateAll } from "../_lib/generate";
-import { verifySession } from "../_lib/auth";
+import { generateAll } from "../../lib/generate";
+import { verifySession } from "../../lib/auth";
 
 export async function onRequestPost(context) {
   const { request, env } = context;
