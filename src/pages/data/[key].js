@@ -1,4 +1,4 @@
-export const config = { runtime: 'edge' };
+export const config = { runtime: 'experimental-edge' };
 
 // Serve R2 objects at /data/<key>
 export default async function handler(req, ctx) {
