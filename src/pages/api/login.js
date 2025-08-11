@@ -3,12 +3,7 @@ export const config = { runtime: 'edge' };
 
 import { createSessionCookie, verifySession } from '../../lib/auth';
 
-function mask(v) {
-  if (!v) return '(unset)';
-  const s = String(v);
-  if (s.length <= 4) return '****';
-  return s.slice(0, 2) + '****' + s.slice(-2);
-}
+function present(v) { return v ? 'yes' : 'no'; }
 
 export default async function handler(req, ctx) {
   const { env } = ctx;
@@ -17,54 +12,45 @@ export default async function handler(req, ctx) {
   try {
     if (method === 'HEAD') {
       const ok = !!(await verifySession(env, req.headers.get('cookie') || ''));
-      console.log('[login] HEAD check ->', ok ? 'OK (200)' : 'NO SESSION (401)');
       return new Response(null, {
         status: ok ? 200 : 401,
         headers: { 'Cache-Control': 'no-store' },
       });
     }
 
-    if (method !== 'POST') {
-      return new Response('Method Not Allowed', { status: 405 });
-    }
+    if (method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
 
-    // Log which env vars are present (masked)
-    console.log('[login] ENV presence', {
-      ADMIN_USER: mask(env?.ADMIN_USER),
-      ADMIN_PASS: mask(env?.ADMIN_PASS),
-      ADMIN_SESSION_SECRET: mask(env?.ADMIN_SESSION_SECRET),
-    });
+    // Hard fail early if required env is missing
+    const missing = [];
+    if (!env?.ADMIN_USER) missing.push('ADMIN_USER');
+    if (!env?.ADMIN_PASS) missing.push('ADMIN_PASS');
+    if (!env?.ADMIN_SESSION_SECRET) missing.push('ADMIN_SESSION_SECRET');
+
+    if (missing.length) {
+      return new Response('Server misconfiguration', {
+        status: 500,
+        headers: {
+          'X-Diag-Admin-User': present(env?.ADMIN_USER),
+          'X-Diag-Admin-Pass': present(env?.ADMIN_PASS),
+          'X-Diag-Admin-Secret': present(env?.ADMIN_SESSION_SECRET),
+          'Cache-Control': 'no-store',
+        },
+      });
+    }
 
     const { username, password } = await req.json().catch(() => ({}));
     if (!username || !password) {
-      console.log('[login] Missing creds in body');
       return new Response('Bad Request', { status: 400 });
     }
 
-    const matchUser = username === env?.ADMIN_USER;
-    const matchPass = password === env?.ADMIN_PASS;
-
-    if (!matchUser || !matchPass) {
-      console.log('[login] Invalid credentials', {
-        gotUser: username,
-        expUser: env?.ADMIN_USER ? '(set)' : '(unset)',
-        userMatch: matchUser,
-        passMatch: matchPass ? 'yes' : 'no',
-      });
+    if (username !== env.ADMIN_USER || password !== env.ADMIN_PASS) {
       return new Response(JSON.stringify({ ok: false, error: 'invalid' }), {
         status: 401,
         headers: { 'Content-Type': 'application/json' },
       });
     }
 
-    if (!env?.ADMIN_SESSION_SECRET) {
-      console.log('[login] ERROR: ADMIN_SESSION_SECRET is not set');
-      return new Response('Server misconfiguration', { status: 500 });
-    }
-
     const cookie = await createSessionCookie(env, username);
-
-    console.log('[login] Success -> issuing session cookie');
     return new Response(JSON.stringify({ ok: true }), {
       headers: {
         'Set-Cookie': cookie,
@@ -73,7 +59,6 @@ export default async function handler(req, ctx) {
       },
     });
   } catch (err) {
-    console.log('[login] Unhandled error:', String(err));
     return new Response('Internal Server Error', { status: 500 });
   }
 }
