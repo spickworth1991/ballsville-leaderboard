@@ -18,3 +18,7 @@
   Cache-Control: public, max-age=86400, immutable
 /*.gif
   Cache-Control: public, max-age=86400, immutable
+
+/admin
+  Content-Security-Policy: default-src 'self'; script-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'
+  Cache-Control: no-store
