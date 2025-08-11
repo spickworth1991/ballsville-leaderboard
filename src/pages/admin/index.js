@@ -1,148 +1,198 @@
-// src/pages/admin/index.js
 export const config = { runtime: 'experimental-edge' };
 
-import { getRequestContext } from '@cloudflare/next-on-pages';
-import { verifySession } from '../../lib/auth';
+export default function AdminPage() {
+  return (
+    <>
+      <meta charSet="utf-8" />
+      <meta name="viewport" content="width=device-width,initial-scale=1" />
+      <title>Leaderboards Admin</title>
 
-const page = (body) => new Response(
-  `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Leaderboards Admin</title>
-  <style>
-    body{font-family:system-ui,sans-serif;margin:2rem;max-width:820px}
-    input,button{padding:.5rem .75rem} .row{display:flex;gap:.5rem;align-items:center;margin:.5rem 0}
-    .card{border:1px solid #ddd;padding:1rem;border-radius:.75rem;margin-bottom:1rem}
-    pre{background:#111;color:#eee;padding:1rem;border-radius:.5rem;max-height:40vh;overflow:auto;white-space:pre-wrap}
-    label{width:160px;display:inline-block}
-    ul{padding-left:1.2rem}
-    .muted{opacity:.7}
-    .btns{display:flex;gap:.5rem;flex-wrap:wrap}
-    .danger{background:#b30000;color:#fff;border:0}
-    button[disabled]{opacity:.6;cursor:not-allowed}
-  </style>${body}`, {
-    headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" }
-  }
-);
+      <style>{`
+        :root { color-scheme: light dark; }
+        body{font-family:system-ui,sans-serif;margin:2rem;max-width:820px}
+        .row{display:flex;gap:.5rem;align-items:center;margin:.5rem 0}
+        .card{border:1px solid #ddd;padding:1rem;border-radius:.75rem;margin-bottom:1rem;background:#fff}
+        pre{background:#111;color:#eee;padding:1rem;border-radius:.5rem;max-height:40vh;overflow:auto;white-space:pre-wrap}
+        label{width:160px;display:inline-block;color:#222}
+        ul{padding-left:1.2rem}
+        .muted{opacity:.7}
+        .btns{display:flex;gap:.5rem;flex-wrap:wrap}
+        .danger{background:#b30000;color:#fff;border:0}
+        button[disabled]{opacity:.6;cursor:not-allowed}
 
-export default async function handler(req) {
-  const { env } = getRequestContext();            // <-- THIS is how to get bindings on Edge
-  const user = await verifySession(env, req.headers.get("cookie") || "");
+        input{
+          padding:.5rem .75rem;
+          background:#fff;
+          color:#000;
+          border:1px solid #ccc;
+          border-radius:.25rem;
+          outline:none;
+          width:260px;
+        }
+        input:focus{border-color:#888; box-shadow:0 0 0 3px rgba(0,0,0,.06)}
 
-  if (!user) {
-    return page(`
+        button{
+          padding:.5rem .75rem;
+          background:#f2f2f2;
+          color:#000;
+          border:1px solid #ccc;
+          border-radius:.25rem;
+          cursor:pointer;
+        }
+        button:hover{filter:brightness(.98)}
+
+        @media (prefers-color-scheme: dark){
+          .card{background:#151515;border-color:#2a2a2a}
+          label{color:#ddd}
+          input{background:#1f1f1f;color:#fff;border-color:#444}
+          input:focus{border-color:#777; box-shadow:0 0 0 3px rgba(255,255,255,.06)}
+          button{background:#2a2a2a;color:#fff;border-color:#444}
+        }
+      `}</style>
+
       <h1>Leaderboards Admin — Login</h1>
-      <div class="card">
-        <div class="row"><label>Username</label><input id="u" /></div>
-        <div class="row"><label>Password</label><input id="p" type="password" /></div>
-        <div class="btns"><button onclick="login()">Login</button></div>
+
+      <div className="card" id="loginCard">
+        <div className="row">
+          <label htmlFor="u">Username</label>
+          <input id="u" placeholder="admin" autoComplete="username" />
+        </div>
+        <div className="row">
+          <label htmlFor="p">Password</label>
+          <input id="p" type="password" placeholder="••••••••" autoComplete="current-password" />
+        </div>
+        <div className="btns">
+          <button type="button" id="loginBtn">Login</button>
+        </div>
       </div>
-      <script>
-      async function login(){
-        const r = await fetch('/api/login', {
-          method:'POST', headers:{'Content-Type':'application/json'},
-          body: JSON.stringify({
-            username: document.getElementById('u').value,
-            password: document.getElementById('p').value
-          })
-        });
-        if(r.ok){ location.reload(); } else { alert('Invalid credentials'); }
-      }
-      </script>
-    `);
-  }
 
-  return page(`
-    <h1>Leaderboards Admin</h1>
-    <div class="card">
-      <h3>Manual Update</h3>
-      <div class="btns">
-        <button id="btnOne" onclick="runUpdate()">Run Now (one-shot)</button>
-        <button id="btnLive" onclick="runLive()">Run (live)</button>
-        <button id="btnCancel" class="danger" onclick="cancelRun()" disabled>Cancel</button>
-        <button class="muted" onclick="clearLogs()">Clear</button>
+      <div className="card" id="adminCard" style={{ display: 'none' }}>
+        <h3>Manual Update</h3>
+        <div className="btns">
+          <button type="button" id="btnOne">Run Now (one-shot)</button>
+          <button type="button" id="btnLive">Run (live)</button>
+          <button type="button" id="btnCancel" className="danger" disabled>Cancel</button>
+          <button type="button" className="muted" id="btnClear">Clear</button>
+        </div>
+        <div id="result"></div>
+        <pre id="logs"></pre>
       </div>
-      <div id="result"></div>
-      <pre id="logs"></pre>
-    </div>
 
-    <div class="card">
-      <h3>Schedule (UTC)</h3>
-      <div class="row"><label>Hour (0-23)</label><input id="hour" type="number" min="0" max="23" value="7"/></div>
-      <div class="row"><label>Minute (0-59)</label><input id="minute" type="number" min="0" max="59" value="0"/></div>
-      <div class="row"><label>Enabled</label><input id="enabled" type="checkbox" checked/></div>
-      <div class="btns"><button onclick="saveSchedule()">Save Schedule</button></div>
-      <div class="row"><small>America/Detroit ≈ UTC‑4 (summer) / UTC‑5 (winter).</small></div>
-    </div>
+      <div className="card" id="schedCard" style={{ display: 'none' }}>
+        <h3>Schedule (UTC)</h3>
+        <div className="row">
+          <label htmlFor="hour">Hour (0-23)</label>
+          <input id="hour" type="number" min="0" max="23" defaultValue="7" />
+        </div>
+        <div className="row">
+          <label htmlFor="minute">Minute (0-59)</label>
+          <input id="minute" type="number" min="0" max="59" defaultValue="0" />
+        </div>
+        <div className="row">
+          <label htmlFor="enabled">Enabled</label>
+          <input id="enabled" type="checkbox" defaultChecked />
+        </div>
+        <div className="btns"><button type="button" id="saveSchedule">Save Schedule</button></div>
+        <div className="row"><small>America/Detroit ≈ UTC‑4 (summer) / UTC‑5 (winter).</small></div>
+      </div>
 
-    <script>
-    const $ = (id)=>document.getElementById(id);
-    let es = null, currentRunId = null;
+      <script
+        dangerouslySetInnerHTML={{
+          __html: `
+          const $=(id)=>document.getElementById(id);
+          let es=null, currentRunId=null;
 
-    function append(msg){ const el=$('logs'); el.textContent += (msg + '\\n'); el.scrollTop = el.scrollHeight; }
-    function clearLogs(){ $('logs').textContent=''; $('result').innerHTML=''; }
-    function setBusy(b){ $('btnOne').disabled=b; $('btnLive').disabled=b; $('btnCancel').disabled=!b; }
+          function showAdminUI(){
+            $('loginCard').style.display='none';
+            $('adminCard').style.display='';
+            $('schedCard').style.display='';
+          }
 
-    async function runUpdate(){
-      clearLogs(); setBusy(true); append('Running (one-shot)...');
-      try {
-        const r = await fetch('/api/update', { method:'POST' });
-        const d = await r.json().catch(()=>({}));
-        if (d.logs) d.logs.forEach(append); else append(JSON.stringify(d,null,2));
-        if (Array.isArray(d.manifest)) renderManifest(d.manifest);
-      } finally { setBusy(false); }
-    }
+          async function checkSession(){
+            try{
+              const r = await fetch('/api/login', { method:'HEAD' });
+              if(r.ok) showAdminUI();
+            }catch{}
+          }
 
-    function runLive(){
-      clearLogs(); setBusy(true); append('Connecting (live)...');
-      es = new EventSource('/api/update-stream');
-      es.onmessage = (e) => {
-        try {
-          const data = JSON.parse(e.data);
-          if (data.type === 'start') { currentRunId = data.runId; append('Started ' + new Date(data.at).toLocaleString()); }
-          if (data.type === 'log') append(data.msg);
-          if (data.type === 'manifest') renderManifest(data.manifest || []);
-          if (data.type === 'done')  { append('✅ Done'); cleanup(); }
-          if (data.type === 'canceled') { append('⏸ Canceled'); cleanup(); }
-          if (data.type === 'error') { append('❌ ' + data.error); cleanup(); }
-        } catch { append(e.data); }
-      };
-      es.onerror = () => { append('❌ stream error'); cleanup(); };
-    }
+          function append(msg){ const el=$('logs'); el.textContent+=(msg+'\\n'); el.scrollTop=el.scrollHeight; }
+          function clearLogs(){ $('logs').textContent=''; $('result').innerHTML=''; }
+          function setBusy(b){ $('btnOne').disabled=b; $('btnLive').disabled=b; $('btnCancel').disabled=!b; }
 
-    async function cancelRun(){
-      if (!currentRunId) return;
-      append('Sending cancel...');
-      try {
-        await fetch('/api/cancel-run', {
-          method:'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ runId: currentRunId })
-        });
-      } catch {}
-    }
+          $('loginBtn').onclick = async (e)=>{
+            e.preventDefault();
+            const r = await fetch('/api/login', {
+              method:'POST',
+              headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({ username:$('u').value, password:$('p').value })
+            });
+            if(r.ok){ showAdminUI(); } else { alert('Invalid credentials'); }
+          };
 
-    function cleanup(){ if (es) { try { es.close(); } catch {} es = null; } currentRunId=null; setBusy(false); }
+          $('btnClear').onclick = clearLogs;
 
-    function renderManifest(m){
-      const items = m.map(x=>{
-        const url = '/data/' + encodeURIComponent(x.key);
-        const mb = (x.bytes/1024/1024).toFixed(2);
-        return '<li><a href="'+url+'" target="_blank">'+x.key+'</a> — '+mb+' MiB</li>';
-      }).join('');
-      $('result').innerHTML = '<h4>Files written</h4><ul>' + items + '</ul>';
-    }
+          $('btnOne').onclick = async ()=>{
+            clearLogs(); setBusy(true);
+            append('Running (one-shot)...');
+            try{
+              const r = await fetch('/api/update', { method:'POST' });
+              const d = await r.json().catch(()=>({}));
+              if(d.logs) d.logs.forEach(append); else append(JSON.stringify(d,null,2));
+              if(d.manifest && Array.isArray(d.manifest)) renderManifest(d.manifest);
+            }finally{ setBusy(false); }
+          };
 
-    async function saveSchedule(){
-      const body = {
-        hourUTC: Number($('hour').value||7),
-        minuteUTC: Number($('minute').value||0),
-        enabled: $('enabled').checked
-      };
-      const r = await fetch('/api/schedule', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify(body)
-      });
-      alert(r.ok ? 'Saved' : 'Failed');
-    }
-    </script>
-  `);
+          $('btnLive').onclick = ()=>{
+            clearLogs(); setBusy(true);
+            append('Connecting (live)...');
+            es = new EventSource('/api/update-stream');
+            es.onmessage = (e)=>{
+              try{
+                const data = JSON.parse(e.data);
+                if(data.type==='start'){ currentRunId=data.runId; append('Started '+new Date(data.at).toLocaleString()); }
+                if(data.type==='log') append(data.msg);
+                if(data.type==='manifest') renderManifest(data.manifest||[]);
+                if(data.type==='done'){ append('✅ Done'); cleanup(); }
+                if(data.type==='canceled'){ append('⏸ Canceled'); cleanup(); }
+                if(data.type==='error'){ append('❌ '+data.error); cleanup(); }
+              }catch{ append(e.data); }
+            };
+            es.onerror = ()=>{ append('❌ stream error'); cleanup(); };
+          };
+
+          $('btnCancel').onclick = async ()=>{
+            if(!currentRunId) return;
+            append('Sending cancel...');
+            try{
+              await fetch('/api/cancel-run', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ runId: currentRunId }) });
+            }catch{}
+          };
+
+          function cleanup(){ if(es){ try{ es.close(); }catch{} es=null; } currentRunId=null; setBusy(false); }
+
+          function renderManifest(m){
+            const items=m.map(x=>{
+              const url='/data/'+encodeURIComponent(x.key);
+              const mb=(x.bytes/1024/1024).toFixed(2);
+              return '<li><a href="'+url+'" target="_blank">'+x.key+'</a> — '+mb+' MiB</li>';
+            }).join('');
+            $('result').innerHTML='<h4>Files written</h4><ul>'+items+'</ul>';
+          }
+
+          $('saveSchedule').onclick = async ()=>{
+            const body = {
+              hourUTC: Number($('hour').value||7),
+              minuteUTC: Number($('minute').value||0),
+              enabled: $('enabled').checked
+            };
+            const r = await fetch('/api/schedule', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+            alert(r.ok ? 'Saved' : 'Failed');
+          };
+
+          checkSession();
+        `,
+        }}
+      />
+    </>
+  );
 }

@@ -1,24 +1,26 @@
 export const config = { runtime: 'edge' };
 
-import { createSessionCookie } from '../../lib/auth';
+import { createSessionCookie, verifySession } from '../../lib/auth';
 
+export default async function handler(req, ctx) {
+  const method = req.method || 'GET';
 
-export async function onRequestPost({ request, env }) {
-  const { username, password } = await request.json().catch(() => ({}));
-  if (!username || !password) return new Response("Bad Request", { status: 400 });
-
-  if (username !== env.ADMIN_USER || password !== env.ADMIN_PASS) {
-    return new Response(JSON.stringify({ ok: false, error: "Invalid credentials" }), {
-      status: 401, headers: { "Content-Type": "application/json" }
-    });
+  if (method === 'HEAD') {
+    const ok = !!(await verifySession(ctx.env, req.headers.get('cookie') || ''));
+    return new Response(null, { status: ok ? 200 : 401, headers: { 'Cache-Control': 'no-store' } });
   }
 
-  const cookie = await createSessionCookie(env, username);
+  if (method !== 'POST') return new Response('Method Not Allowed', { status: 405 });
+
+  const { username, password } = await req.json().catch(() => ({}));
+  if (!username || !password) return new Response('Bad Request', { status: 400 });
+
+  if (username !== ctx.env.ADMIN_USER || password !== ctx.env.ADMIN_PASS) {
+    return new Response(JSON.stringify({ ok: false }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  const cookie = await createSessionCookie(ctx.env, username);
   return new Response(JSON.stringify({ ok: true }), {
-    headers: {
-      "Set-Cookie": cookie,
-      "Content-Type": "application/json",
-      "Cache-Control": "no-store"
-    }
+    headers: { 'Set-Cookie': cookie, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
   });
 }

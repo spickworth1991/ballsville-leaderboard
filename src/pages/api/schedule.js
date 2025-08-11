@@ -1,31 +1,35 @@
 export const config = { runtime: 'edge' };
 
-// GET returns the current schedule from KV
-export async function onRequestGet({ env }) {
-  const raw = await env.CONFIG_KV.get("schedule");
-  const fallback = { hourUTC: 7, minuteUTC: 0, enabled: true };
-  return new Response(raw ?? JSON.stringify(fallback), {
-    headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
-  });
-}
+import { verifySession } from '../../lib/auth';
 
-// POST saves a new schedule to KV (auth: cookie "admin=1" OR Bearer ADMIN_TOKEN)
-export async function onRequestPost({ request, env }) {
-  const auth = request.headers.get("authorization") || "";
-  const cookie = request.headers.get("cookie") || "";
-  const hasCookie = /\badmin=1\b/.test(cookie);
-  const hasBearer = env.ADMIN_TOKEN && auth === `Bearer ${env.ADMIN_TOKEN}`;
-  if (!hasCookie && !hasBearer) return new Response("Unauthorized", { status: 401 });
+// GET current schedule
+export default async function handler(req, ctx) {
+  const { env } = ctx;
 
-  const body = await request.json().catch(() => null);
-  if (!body) return new Response("Bad Request", { status: 400 });
+  if (req.method === 'GET') {
+    const raw = await env.CONFIG_KV.get("schedule");
+    const fallback = { hourUTC: 7, minuteUTC: 0, enabled: true };
+    return new Response(raw ?? JSON.stringify(fallback), {
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" }
+    });
+  }
 
-  // Validate & clamp
-  const hour = Math.max(0, Math.min(23, Number(body.hourUTC ?? 7) | 0));
-  const minute = Math.max(0, Math.min(59, Number(body.minuteUTC ?? 0) | 0));
-  const enabled = !!body.enabled;
+  if (req.method === 'POST') {
+    const user = await verifySession(env, req.headers.get('cookie') || '');
+    const auth = req.headers.get('authorization') || '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    if (!(user || (token && token === env.ADMIN_TOKEN))) return new Response('Unauthorized', { status: 401 });
 
-  await env.CONFIG_KV.put("schedule", JSON.stringify({ hourUTC: hour, minuteUTC: minute, enabled }));
+    const body = await req.json().catch(() => null);
+    if (!body) return new Response("Bad Request", { status: 400 });
 
-  return new Response("OK", { status: 200 });
+    const hour = Math.max(0, Math.min(23, Number(body.hourUTC ?? 7) | 0));
+    const minute = Math.max(0, Math.min(59, Number(body.minuteUTC ?? 0) | 0));
+    const enabled = !!body.enabled;
+
+    await env.CONFIG_KV.put("schedule", JSON.stringify({ hourUTC: hour, minuteUTC: minute, enabled }));
+    return new Response("OK", { status: 200 });
+  }
+
+  return new Response('Method Not Allowed', { status: 405 });
 }
