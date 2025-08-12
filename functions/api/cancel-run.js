@@ -1,7 +1,7 @@
 export const config = { runtime: 'edge' };
 
-import { getRun, cancelRun } from '../../lib/run-state';
-import { verifySession } from '../../../functions/_lib/auth';
+import { getRun, cancelRun } from '../_lib/run-state';
+import { verifySession } from '../_lib/auth';
 
 export default async function handler(req, ctx) {
   const { env } = ctx;

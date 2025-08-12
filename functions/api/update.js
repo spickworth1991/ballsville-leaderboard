@@ -1,7 +1,7 @@
 export const config = { runtime: 'edge' };
 
-import { generateAll } from '../../lib/generate';
-import { verifySession } from '../../../functions/_lib/auth';
+import { generateAll } from '../_lib/generate';
+import { verifySession } from '../_lib/auth';
 
 export default async function handler(req, ctx) {
   const { env } = ctx;
