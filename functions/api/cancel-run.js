@@ -1,7 +1,7 @@
 
 
-import { getRun, cancelRun } from '../_lib/run-state';
-import { verifySession } from '../_lib/auth';
+import { getRun, cancelRun } from '../_lib/run-state.js';
+import { verifySession } from '../_lib/auth.js';
 
 export default async function handler(req, ctx) {
   const { env } = ctx;

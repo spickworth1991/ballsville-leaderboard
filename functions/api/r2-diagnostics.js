@@ -1,6 +1,6 @@
 
 
-import { verifySession } from '../_lib/auth';
+import { verifySession } from '../_lib/auth.js';
 
 export default async function handler(req, ctx) {
   const { env } = ctx;

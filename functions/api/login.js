@@ -1,5 +1,5 @@
 // functions/api/login.js
-import { createSessionCookie, verifySession } from '../_lib/auth';
+import { createSessionCookie, verifySession } from '../_lib/auth.js';
 
 export async function onRequest(context) {
   const { request, env } = context;

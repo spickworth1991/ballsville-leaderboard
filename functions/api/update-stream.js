@@ -1,8 +1,8 @@
 
 
-import { generateAll } from '../_lib/generate';
-import { verifySession } from '../_lib/auth';
-import { createRun, endRun } from '../_lib/run-state';
+import { generateAll } from '../_lib/generate.js';
+import { verifySession } from '../_lib/auth.js';
+import { createRun, endRun } from '../_lib/run-state.js';
 
 const enc = new TextEncoder();
 const line = (obj) => enc.encode(`data: ${JSON.stringify(obj)}\n\n`);

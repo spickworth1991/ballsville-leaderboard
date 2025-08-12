@@ -1,6 +1,6 @@
 
-import { generateAll } from '../_lib/generate';
-import { verifySession } from '../_lib/auth';
+import { generateAll } from '../_lib/generate.js';
+import { verifySession } from '../_lib/auth.js';
 
 export default async function handler(req, ctx) {
   const { env } = ctx;

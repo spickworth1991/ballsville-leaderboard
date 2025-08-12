@@ -1,5 +1,5 @@
 
-import { verifySession } from '../_lib/auth';
+import { verifySession } from '../_lib/auth.js';
 
 // GET current schedule
 export default async function handler(req, ctx) {
