@@ -1,7 +1,7 @@
 export const config = { runtime: 'edge' };
 
 import { generateAll } from '../../lib/generate';
-import { verifySession } from '../../lib/auth';
+import { verifySession } from '../../../functions/_lib/auth';
 import { createRun, endRun } from '../../lib/run-state';
 
 const enc = new TextEncoder();

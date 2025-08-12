@@ -1,6 +1,6 @@
 export const config = { runtime: 'edge' };
 
-import { verifySession } from '../../lib/auth';
+import { verifySession } from '../../../functions/_lib/auth';
 
 export default async function handler(req, ctx) {
   const { env } = ctx;
