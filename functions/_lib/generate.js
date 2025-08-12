@@ -1,4 +1,4 @@
-import pLimit from "p-limit";
+import pLimit from "./p-limit";
 import { LEAGUE_MAP } from "./league_map";
 
 const CONCURRENCY = 5;
