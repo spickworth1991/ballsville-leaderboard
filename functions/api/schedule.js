@@ -1,4 +1,3 @@
-export const config = { runtime: 'edge' };
 
 import { verifySession } from '../_lib/auth';
 

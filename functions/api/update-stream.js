@@ -1,4 +1,4 @@
-export const config = { runtime: 'edge' };
+
 
 import { generateAll } from '../_lib/generate';
 import { verifySession } from '../_lib/auth';
