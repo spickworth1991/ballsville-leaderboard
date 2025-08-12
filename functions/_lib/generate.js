@@ -1,5 +1,5 @@
 
-import { LEAGUE_MAP } from "./league_map";
+import { LEAGUE_MAP } from "./league_map.js";
 
 const CONCURRENCY = 5;
 const RETRIES = 3;
