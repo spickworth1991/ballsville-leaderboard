@@ -25,6 +25,6 @@ bucket_name = "leaderboard-data"
 
 # Environment vars (handy for local dev; in Cloudflare Pages UI you can also set them)
 [vars]
-
+ADMIN_USER = "Boss"
 
 
