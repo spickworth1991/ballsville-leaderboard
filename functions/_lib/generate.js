@@ -1,9 +1,29 @@
-import pLimit from "./p-limit";
+
 import { LEAGUE_MAP } from "./league_map";
 
 const CONCURRENCY = 5;
 const RETRIES = 3;
 const MAX_WEEKS = 18;
+
+ // tiny in-file p-limit so we don’t need an npm module
+ function pLimit(concurrency) {
+   let active = 0;
+   const queue = [];
+   const next = () => {
+     if (active >= concurrency || queue.length === 0) return;
+     active++;
+     const { fn, resolve, reject } = queue.shift();
+     Promise.resolve()
+       .then(fn)
+       .then((v) => { active--; resolve(v); next(); })
+       .catch((e) => { active--; reject(e); next(); });
+   };
+   return (fn) =>
+     new Promise((resolve, reject) => {
+       queue.push({ fn, resolve, reject });
+       next();
+     });
+ }
 
 async function fetchWithRetry(url, retries = RETRIES, f = fetch, signal) {
   for (let i = 0; i < retries; i++) {
