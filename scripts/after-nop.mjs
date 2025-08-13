@@ -68,13 +68,14 @@ export default {
       if (!obj) return new Response("Not found", { status: 404 });
       const isJSON = key.endsWith(".json");
       return new Response(obj.body, {
-        headers: {
+      headers: {
           "Content-Type": isJSON ? "application/json" : "application/octet-stream",
-          "Cache-Control": isJSON ? "public, max-age=3600, stale-while-revalidate=59"
+          "Cache-Control": isJSON ? "no-store"
                                   : "public, max-age=604800, immutable",
           "Access-Control-Allow-Origin": "*"
-        }
+      }
       });
+
     }
 
     // 3) Everything else -> Next’s worker

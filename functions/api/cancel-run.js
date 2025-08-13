@@ -1,7 +1,8 @@
-
-
+// functions/api/cancel-run.js
 import { getRun, cancelRun } from '../_lib/run-state.js';
 import { verifySession } from '../_lib/auth.js';
+
+const CURSOR_KEY = 'run_cursor_v1';
 
 export default async function handler(req, ctx) {
   const { env } = ctx;
@@ -15,7 +16,13 @@ export default async function handler(req, ctx) {
   const { runId } = await req.json().catch(() => ({}));
   if (!runId) return new Response('Bad Request', { status: 400 });
 
-  const exists = !!getRun(runId);
+  const existed = !!getRun(runId);
   const ok = cancelRun(runId);
-  return new Response(JSON.stringify({ ok, existed: exists }), { headers: { 'Content-Type': 'application/json' } });
+
+  // Also clear the persisted cursor so a future Live run starts from scratch.
+  try { await env.CONFIG_KV.delete(CURSOR_KEY); } catch {}
+
+  return new Response(JSON.stringify({ ok, existed }), {
+    headers: { 'Content-Type': 'application/json' }
+  });
 }
