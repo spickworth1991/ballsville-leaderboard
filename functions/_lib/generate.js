@@ -42,6 +42,11 @@ async function r2GetJSON(bucket, key, fallback = {}) {
   const obj = await bucket.get(key); if (!obj) return fallback;
   const txt = await obj.text(); try { return JSON.parse(txt); } catch { return fallback; }
 }
+async function kvGetJSON(kv, key, fallback = {}) {
+  const txt = await kv.get(key);
+  if (!txt) return fallback;
+  try { return JSON.parse(txt); } catch { return fallback; }
+}
 function uniqPushOwner(arr, item) {
   if (!arr.__idx) arr.__idx = new Map();
   const key = `${item.leagueName}::${item.ownerName}`;
@@ -208,7 +213,8 @@ export async function generateAll(env, log = () => {}, isCanceled = () => false,
   const shardWeeklyAdd = { [w.year]: { [w.category]: { [leagueName]: weeklyRosters } } };
 
   // ensure shard is recorded
-  const shardList = await r2GetJSON(env.CONFIG_KV, SHARD_LIST_FULL, []);
+  // NEW (correct: KV read)
+const shardList = await kvGetJSON(env.CONFIG_KV, SHARD_LIST_FULL, []);
   if (!shardList.find(s => s.year === w.year && s.category === w.category)) {
     shardList.push({ year: w.year, category: w.category });
     await env.CONFIG_KV.put(SHARD_LIST_FULL, JSON.stringify(shardList));
