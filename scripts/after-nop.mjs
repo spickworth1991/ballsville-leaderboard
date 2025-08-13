@@ -26,7 +26,7 @@ try { fs.unlinkSync(nextIndex); } catch {}
 fs.renameSync(genIndex, nextIndex);
 
 // 2) Copy your repo’s functions into the worker bundle
-const repoFunctions = path.join("functions");              // <— your existing folder at repo root
+const repoFunctions = path.join("functions");              // your existing folder at repo root
 const workerFunctions = path.join(workerDir, "functions"); // will live under _worker.js/
 copyDir(repoFunctions, workerFunctions);
 
@@ -45,6 +45,20 @@ const apiRoutes = {
 
 const dataRoute = /^\\/data\\/.+/;
 
+// helpers for synthesizing leaderboards.json from shards
+function dedupePushOwner(arr, item) {
+  if (!arr._map) arr._map = new Map();
+  const key = \`\${item.leagueName}::\${item.ownerName}\`;
+  if (!arr._map.has(key)) { arr._map.set(key, arr.length); arr.push(item); }
+  else {
+    const ex = arr[arr._map.get(key)];
+    ex.total = item.total ?? ex.total ?? 0;
+    ex.weekly = { ...(ex.weekly || {}), ...(item.weekly || {}) };
+    if (item.latestRoster) ex.latestRoster = item.latestRoster;
+    ex.draftSlot = ex.draftSlot ?? item.draftSlot ?? null;
+  }
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
@@ -59,23 +73,84 @@ export default {
       return new Response("Bad handler", { status: 500 });
     }
 
-    // 2) /data/* from R2
+    // 2) /data/*
     if (dataRoute.test(url.pathname)) {
       if (!env?.LEADERBOARDS) return new Response("R2 not bound", { status: 500 });
       const key = decodeURIComponent(url.pathname.replace(/^\\/data\\/?/, ""));
       if (!key) return new Response("Not found", { status: 404 });
+
+      // 2a) Special case: synthesize /data/leaderboards.json from shards if monolith not present
+      if (key === "leaderboards.json") {
+        // If you wrote a monolith at the end of a run, prefer it.
+        const mono = await env.LEADERBOARDS.get("leaderboards.json");
+        if (mono) {
+          return new Response(mono.body, {
+            headers: {
+              "Content-Type": "application/json",
+              "Cache-Control": "no-store",
+              "Access-Control-Allow-Origin": "*"
+            }
+          });
+        }
+
+        // Otherwise, compose from shards recorded in CONFIG_KV
+        const listStr = await env.CONFIG_KV?.get?.("shard_list_full_v2");
+        const shards = listStr ? JSON.parse(listStr) : [];
+
+        const out = {};
+        for (const { year, category } of shards) {
+          const shardKey = \`leaderboards/\${year}/\${category}.json\`;
+          const obj = await env.LEADERBOARDS.get(shardKey);
+          if (!obj) continue;
+          const shard = JSON.parse(await obj.text());
+          const pay = shard?.[year]?.[category];
+          if (!pay) continue;
+
+          out[year] ??= {};
+          const dst = (out[year][category] ??= { name: pay.name || "", weeks: [], owners: [], divisions: [], leaguesByDivision: {} });
+
+          // merge weeks
+          const wk = new Set([...(dst.weeks || []), ...(pay.weeks || [])]);
+          dst.weeks = [...wk].map(Number).sort((a,b)=>a-b);
+
+          // merge divisions
+          dst.divisions = [...new Set([...(dst.divisions || []), ...(pay.divisions || [])])];
+
+          // merge leaguesByDivision
+          for (const [div, list] of Object.entries(pay.leaguesByDivision || {})) {
+            dst.leaguesByDivision[div] = [...new Set([...(dst.leaguesByDivision[div] || []), ...(list || [])])];
+          }
+
+          // merge owners (de-dupe by leagueName+ownerName)
+          (pay.owners || []).forEach(o => dedupePushOwner(dst.owners, o));
+        }
+        // cleanup helper map to avoid exposing internals
+        for (const y of Object.values(out)) {
+          for (const c of Object.values(y)) { if (c && c.owners && c.owners._map) delete c.owners._map; }
+        }
+
+        const body = JSON.stringify(out, null, 2);
+        return new Response(body, {
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "no-store",
+            "Access-Control-Allow-Origin": "*"
+          }
+        });
+      }
+
+      // 2b) All other /data/* straight from R2
       const obj = await env.LEADERBOARDS.get(key);
       if (!obj) return new Response("Not found", { status: 404 });
       const isJSON = key.endsWith(".json");
       return new Response(obj.body, {
-      headers: {
+        headers: {
           "Content-Type": isJSON ? "application/json" : "application/octet-stream",
           "Cache-Control": isJSON ? "no-store"
                                   : "public, max-age=604800, immutable",
           "Access-Control-Allow-Origin": "*"
-      }
+        }
       });
-
     }
 
     // 3) Everything else -> Next’s worker
