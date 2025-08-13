@@ -121,22 +121,19 @@ export async function generateAll(env, log = () => {}, isCanceled = () => false,
     return { key, bytes: bodyStr.length };
   };
 
-  // players DB (first batch): fetch once and save a compact map { id: full_name }
-  if (i === 0) {
-    const playersDB = await fetchWithRetry("https://api.sleeper.app/v1/players/nfl", RETRIES, fetch, signal);
+  
+  // ---- ensure compact players map exists, then load it ----
+  let playersRes = await env.LEADERBOARDS.get("players_min.json");
+  if (!playersRes) {
+    const playersDBFull = await fetchWithRetry("https://api.sleeper.app/v1/players/nfl", RETRIES, fetch, signal);
     const min = {};
-    for (const [id, p] of Object.entries(playersDB)) {
-      // keep only the full name (add pos/team later if needed)
-      min[id] = p?.full_name || "";
-    }
-    const { body: minBody } = strBody(min);
-    await put("players_min.json", minBody);
+    for (const [id, p] of Object.entries(playersDBFull)) min[id] = p?.full_name || "";
+    await env.LEADERBOARDS.put("players_min.json", JSON.stringify(min));
+    log("💾 wrote players_min.json");
+    playersRes = await env.LEADERBOARDS.get("players_min.json");
   }
-
-  // load compact players map every batch
-  const playersRes = await env.LEADERBOARDS.get("players_min.json");
-  if (!playersRes) throw new Error("players_min.json missing in R2");
   const playersDB = JSON.parse(await playersRes.text());
+
 
   // one league per batch
   const w = work[i];
