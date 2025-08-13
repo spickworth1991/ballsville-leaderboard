@@ -1,9 +1,7 @@
 // public/admin.bundle.js
 const $ = (id) => document.getElementById(id);
-
-let es = null;
-let currentRunId = null;
-let cursor = null; // resume token sent by the server between batches
+let es = null, currentRunId = null;
+let liveLoopActive = false;
 
 function showAdminUI() {
   $('loginCard').style.display = 'none';
@@ -23,16 +21,59 @@ function append(msg) {
   el.textContent += (msg + '\n');
   el.scrollTop = el.scrollHeight;
 }
+function clearLogs() { $('logs').textContent = ''; $('result').innerHTML = ''; }
+function setBusy(b) { $('btnOne').disabled = b; $('btnLive').disabled = b; $('btnCancel').disabled = !b; }
 
-function clearLogs() {
-  $('logs').textContent = '';
-  $('result').innerHTML = '';
+function renderManifest(m) {
+  const items = (m || []).map(x => {
+    const url = '/data/' + encodeURIComponent(x.key);
+    const mb = (x.bytes / 1024 / 1024).toFixed(2);
+    return '<li><a href="' + url + '" target="_blank">' + x.key + '</a> — ' + mb + ' MiB</li>';
+  }).join('');
+  $('result').innerHTML = items ? ('<h4>Files written</h4><ul>' + items + '</ul>') : '';
 }
 
-function setBusy(b) {
-  $('btnOne').disabled = b;
-  $('btnLive').disabled = b;
-  $('btnCancel').disabled = !b;
+function startLiveOnce() {
+  append('Connecting (live)...');
+  es = new EventSource('/api/update-stream');
+  es.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      if (data.type === 'start') { currentRunId = data.runId; append('Started ' + new Date(data.at).toLocaleString()); }
+      if (data.type === 'log') append(data.msg);
+      if (data.type === 'manifest') renderManifest(data.manifest || []);
+      if (data.type === 'pause') {
+        append('⏸ Paused to avoid subrequest cap — continuing…');
+        // close this SSE and immediately start another batch
+        try { es.close(); } catch {}
+        es = null;
+        // slight delay so the previous request fully finishes on the edge
+        setTimeout(() => {
+          if (liveLoopActive) startLiveOnce();
+        }, 100);
+      }
+      if (data.type === 'done') { append('✅ Done'); cleanup(); }
+      if (data.type === 'canceled') { append('⏸ Canceled'); cleanup(); }
+      if (data.type === 'error') { append('❌ ' + data.error); cleanup(); }
+    } catch { append(e.data); }
+  };
+  // We intentionally do NOT treat onerror as fatal; the server closes between batches.
+  es.onerror = () => {
+    append('…');
+  };
+}
+
+function startLiveLoop() {
+  if (liveLoopActive) return;
+  liveLoopActive = true;
+  clearLogs(); setBusy(true);
+  startLiveOnce();
+}
+
+function cleanup() {
+  liveLoopActive = false;
+  if (es) { try { es.close(); } catch {} es = null; }
+  currentRunId = null; setBusy(false);
 }
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -43,40 +84,25 @@ window.addEventListener('DOMContentLoaded', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: $('u').value, password: $('p').value })
       });
-      if (r.ok) {
-        showAdminUI();
-      } else {
-        alert('Invalid credentials');
-      }
-    } catch {
-      alert('Network error');
-    }
+      if (r.ok) { showAdminUI(); } else { alert('Invalid credentials'); }
+    } catch { alert('Network error'); }
   };
 
   $('btnClear').onclick = clearLogs;
 
   $('btnOne').onclick = async () => {
-    clearLogs();
-    setBusy(true);
-    cursor = null;
+    clearLogs(); setBusy(true);
     append('Running (one-shot)...');
     try {
       const r = await fetch('/api/update', { method: 'POST' });
       const d = await r.json().catch(() => ({}));
-      if (d.logs) d.logs.forEach(append);
-      else append(JSON.stringify(d, null, 2));
+      if (d.logs) d.logs.forEach(append); else append(JSON.stringify(d, null, 2));
       if (d.manifest && Array.isArray(d.manifest)) renderManifest(d.manifest);
-    } finally {
-      setBusy(false);
-    }
+    } finally { setBusy(false); }
   };
 
   $('btnLive').onclick = () => {
-    clearLogs();
-    setBusy(true);
-    cursor = null;
-    append('Connecting (live)...');
-    connectSSE();
+    startLiveLoop();
   };
 
   $('btnCancel').onclick = async () => {
@@ -107,84 +133,3 @@ window.addEventListener('DOMContentLoaded', () => {
 
   checkSession();
 });
-
-function connectSSE() {
-  // Build the URL and include cursor if we have one (for auto-resume)
-  const url = new URL('/api/update-stream', location.origin);
-  if (cursor) url.searchParams.set('cursor', JSON.stringify(cursor));
-
-  es = new EventSource(url.toString());
-
-  es.onmessage = (e) => {
-    try {
-      const data = JSON.parse(e.data);
-
-      if (data.type === 'start') {
-        currentRunId = data.runId || null;
-        append('Started ' + new Date(data.at).toLocaleString());
-      }
-
-      if (data.type === 'log') {
-        append(data.msg);
-      }
-
-      if (data.type === 'manifest') {
-        renderManifest(data.manifest || []);
-      }
-
-      // NEW: server can ask us to continue with a cursor (after batch completes)
-      if (data.type === 'continue') {
-        cursor = data.cursor || null;
-        append('⏭️ Continuing...');
-        try { es.close(); } catch {}
-        // Immediately reconnect with the provided cursor
-        connectSSE();
-        return;
-      }
-
-      if (data.type === 'done') {
-        append('✅ Done');
-        cursor = null;
-        cleanup();
-      }
-
-      if (data.type === 'canceled') {
-        append('⏸ Canceled');
-        cursor = null;
-        cleanup();
-      }
-
-      if (data.type === 'error') {
-        append('❌ ' + data.error);
-        cursor = null;
-        cleanup();
-      }
-    } catch {
-      // Fallback when a non-JSON line sneaks through (e.g., keepalive)
-      append(e.data);
-    }
-  };
-
-  es.onerror = () => {
-    append('❌ stream error');
-    cleanup();
-  };
-}
-
-function cleanup() {
-  if (es) {
-    try { es.close(); } catch {}
-    es = null;
-  }
-  currentRunId = null;
-  setBusy(false);
-}
-
-function renderManifest(m) {
-  const items = m.map(x => {
-    const url = '/data/' + encodeURIComponent(x.key);
-    const mb = (x.bytes / 1024 / 1024).toFixed(2);
-    return '<li><a href="' + url + '" target="_blank">' + x.key + '</a> — ' + mb + ' MiB</li>';
-  }).join('');
-  $('result').innerHTML = '<h4>Files written</h4><ul>' + items + '</ul>';
-}

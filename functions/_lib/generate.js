@@ -1,44 +1,38 @@
 // functions/_lib/generate.js
 import { LEAGUE_MAP } from "./league_map.js";
 
-// --- tiny p-limit (unchanged) ---
+// tiny p-limit (we still run sequentially to keep subrequests predictable)
 function pLimit(concurrency) {
   let active = 0;
-  const queue = [];
+  const q = [];
   const next = () => {
-    if (active >= concurrency || queue.length === 0) return;
+    if (active >= concurrency || q.length === 0) return;
     active++;
-    const { fn, resolve, reject } = queue.shift();
+    const { fn, resolve, reject } = q.shift();
     Promise.resolve()
       .then(fn)
       .then((v) => { active--; resolve(v); next(); })
       .catch((e) => { active--; reject(e); next(); });
   };
-  return (fn) =>
-    new Promise((resolve, reject) => {
-      queue.push({ fn, resolve, reject });
-      next();
-    });
+  return (fn) => new Promise((resolve, reject) => { q.push({ fn, resolve, reject }); next(); });
 }
 
-const CONCURRENCY = 1;   // keep tiny—subrequest cap is per request, not just concurrent
+const CONCURRENCY = 1;
 const RETRIES = 3;
 const MAX_WEEKS = 18;
 
-// --- subrequest budget (per HTTP request) ---
-// stay well under CF’s ~50 limit; count every outgoing fetch we do
-const SUBREQ_BUDGET = 38;
+// --- per-request subrequest budget ---
+const SUBREQ_BUDGET = 38; // well under CF’s ~50 cap
 let subreqCount = 0;
 function tickSubreq() {
   subreqCount++;
   if (subreqCount >= SUBREQ_BUDGET) {
     const err = new Error("PAUSE");
     err.name = "PAUSE";
-    throw err; // caught and surfaced as a clean “pause”
+    throw err;
   }
 }
 
-// fetch with retry + budget
 async function fetchWithRetry(url, retries = RETRIES, f = fetch, signal) {
   for (let i = 0; i < retries; i++) {
     if (signal?.aborted) throw new Error("Canceled");
@@ -55,11 +49,25 @@ const findLatestWeek = (map) => {
   return weeks.length ? Math.max(...weeks) : null;
 };
 
-export async function generateAll(env, log = () => {}, isCanceled = () => false) {
+// Flatten league work so we can keep a simple integer cursor
+function buildWorkList() {
+  const items = [];
+  for (const [year, cats] of Object.entries(LEAGUE_MAP)) {
+    for (const [category, details] of Object.entries(cats)) {
+      for (const [division, leagues] of Object.entries(details.divisions)) {
+        for (const leagueId of leagues) {
+          items.push({ year, category, division, leagueId, displayName: details.name });
+        }
+      }
+    }
+  }
+  return items;
+}
+
+export async function generateAll(env, log = () => {}, isCanceled = () => false, startCursor = null) {
   if (!env?.LEADERBOARDS?.put) throw new Error("LEADERBOARDS binding missing");
 
-  // reset budget for this HTTP request
-  subreqCount = 0;
+  subreqCount = 0; // reset budget for THIS request
 
   const ac = new AbortController();
   const signal = ac.signal;
@@ -68,42 +76,42 @@ export async function generateAll(env, log = () => {}, isCanceled = () => false)
 
   const put = async (key, value) => {
     if (isCanceled()) { ac.abort(); throw new Error("Canceled"); }
-
     const bytes =
       typeof value === "string"
         ? new TextEncoder().encode(value).length
         : value?.byteLength ?? String(value).length;
-
     await env.LEADERBOARDS.put(key, value);
     manifest.push({ key, bytes });
     log(`💾 wrote ${key} (${(bytes / 1024 / 1024).toFixed(2)} MiB)`);
     return { key, bytes };
   };
 
-  // 1) Players DB
-  if (isCanceled()) { ac.abort(); throw new Error("Canceled"); }
-  const playersDB = await fetchWithRetry(
-    "https://api.sleeper.app/v1/players/nfl",
-    RETRIES,
-    fetch,
-    signal
-  );
-  await put("sleeper_players.json", JSON.stringify(playersDB));
+  const work = buildWorkList();
+  let i = Math.max(0, Number(startCursor?.i || 0));
+  const finished = () => i >= work.length;
 
-  // progress totals (for nice logs)
-  const totalLeagues = Object.values(LEAGUE_MAP)
-    .flatMap((y) => Object.values(y))
-    .flatMap((m) => Object.values(m.divisions).flat()).length;
-  let completed = 0;
-  const progress = (m) => { completed++; log(`${m}`); }; // keep your existing wording
+  // Phase 0 — only on very first batch
+  if (i === 0) {
+    const playersDB = await fetchWithRetry("https://api.sleeper.app/v1/players/nfl", RETRIES, fetch, signal);
+    await put("sleeper_players.json", JSON.stringify(playersDB));
+  }
 
-  async function processLeague(leagueId, division) {
-    if (isCanceled()) { ac.abort(); throw new Error("Canceled"); }
+  // Load players DB for this batch
+  const playersRes = await env.LEADERBOARDS.get("sleeper_players.json");
+  if (!playersRes) throw new Error("sleeper_players.json missing in R2");
+  const playersDB = JSON.parse(await playersRes.text());
 
+  // Rolling (this batch only)
+  const fullData = {};
+  const weeklyData = {};
+
+  async function processLeague(entry) {
+    const { leagueId, division } = entry;
     const base = `https://api.sleeper.app/v1/league/${leagueId}`;
+
     const info = await fetchWithRetry(base, RETRIES, fetch, signal);
     const leagueName = info.name;
-    progress(`Processing ${leagueName} - ${completed}/${totalLeagues}`);
+    log(`Processing ${leagueName} - ${i}/${work.length}`);
 
     const users = await fetchWithRetry(`${base}/users`, RETRIES, fetch, signal);
     const rosters = await fetchWithRetry(`${base}/rosters`, RETRIES, fetch, signal);
@@ -114,14 +122,14 @@ export async function generateAll(env, log = () => {}, isCanceled = () => false)
     const draftId = drafts?.[0]?.draft_id;
     const draftDetails = draftId
       ? await fetchWithRetry(`https://api.sleeper.app/v1/draft/${draftId}`, RETRIES, fetch, signal)
-      : [];
+      : null;
+
     const draftSlotMap = {};
     draftDetails?.draft_order &&
       Object.entries(draftDetails.draft_order).forEach(([uid, slot]) => { draftSlotMap[uid] = slot; });
 
     const matchupsByWeek = {};
     for (let week = 1; week <= MAX_WEEKS; week++) {
-      if (isCanceled()) { ac.abort(); throw new Error("Canceled"); }
       const ms = await fetchWithRetry(`${base}/matchups/${week}`, RETRIES, fetch, signal);
       if (!ms?.length) break;
       matchupsByWeek[week] = ms;
@@ -130,12 +138,10 @@ export async function generateAll(env, log = () => {}, isCanceled = () => false)
     const latestWeek = findLatestWeek(matchupsByWeek);
     const latestMatchups = latestWeek ? matchupsByWeek[latestWeek] : [];
 
-    // owners/weekly
     const owners = [];
     const weeklyRosters = {};
 
     for (const [week, ms] of Object.entries(matchupsByWeek)) {
-      if (isCanceled()) { ac.abort(); throw new Error("Canceled"); }
       weeklyRosters[week] = [];
       ms.forEach((m) => {
         const ownerId = rosterMap[m.roster_id];
@@ -190,7 +196,7 @@ export async function generateAll(env, log = () => {}, isCanceled = () => false)
       ex.total = total;
     });
 
-    // latest roster snapshot
+    // latest roster
     owners.forEach((o) => {
       const m = latestMatchups.find((mx) => userMap[rosterMap[mx.roster_id]] === o.ownerName);
       if (!m) return;
@@ -208,71 +214,53 @@ export async function generateAll(env, log = () => {}, isCanceled = () => false)
     return { leagueName, owners, weeklyRosters };
   }
 
-  // 2) Build data (stops cleanly when we near the subrequest cap)
-  const fullData = {};
-  const weeklyData = {};
-
+  // process leagues until we hit budget (or finish)
   try {
-    for (const [year, categories] of Object.entries(LEAGUE_MAP)) {
+    for (; i < work.length; i++) {
       if (isCanceled()) { ac.abort(); throw new Error("Canceled"); }
+      const w = work[i];
 
-      fullData[year] = fullData[year] || {};
-      weeklyData[year] = weeklyData[year] || {};
-
-      for (const [category, details] of Object.entries(categories)) {
-        if (isCanceled()) { ac.abort(); throw new Error("Canceled"); }
-
-        const catFull = fullData[year][category] || {
-          name: details.name,
+      // ensure containers
+      fullData[w.year] ??= {};
+      weeklyData[w.year] ??= {};
+      if (!fullData[w.year][w.category]) {
+        fullData[w.year][w.category] = {
+          name: w.displayName,
           weeks: [],
           owners: [],
-          divisions: Object.keys(details.divisions),
+          divisions: Object.keys(LEAGUE_MAP[w.year][w.category].divisions),
           leaguesByDivision: {},
         };
-        fullData[year][category] = catFull;
-        weeklyData[year][category] = weeklyData[year][category] || {};
-
-        for (const [division, leagues] of Object.entries(details.divisions)) {
-          // ensure array to avoid .push on non-array
-          if (!Array.isArray(catFull.leaguesByDivision[division])) {
-            catFull.leaguesByDivision[division] = [];
-          }
-
-          for (const leagueId of leagues) {
-            // do one league at a time (also keeps subrequests predictable)
-            const r = await limit(() => processLeague(leagueId, division));
-            catFull.owners.push(...r.owners);
-            catFull.leaguesByDivision[division].push(r.leagueName);
-            weeklyData[year][category][r.leagueName] = r.weeklyRosters;
-
-            // recompute weeks for this category (based on what we’ve seen this batch)
-            const weeks = [
-              ...new Set(catFull.owners.flatMap((o) => Object.keys(o.weekly)))
-            ].sort((a, b) => a - b);
-            catFull.weeks = weeks.map(Number);
-          }
-        }
       }
+      const catFull = fullData[w.year][w.category];
+      if (!Array.isArray(catFull.leaguesByDivision[w.division])) {
+        catFull.leaguesByDivision[w.division] = [];
+      }
+      weeklyData[w.year][w.category] ??= {};
+
+      // do one league
+      const r = await limit(() => processLeague(w));
+      catFull.owners.push(...r.owners);
+      catFull.leaguesByDivision[w.division].push(r.leagueName);
+      weeklyData[w.year][w.category][r.leagueName] = r.weeklyRosters;
+
+      // recompute weeks (for what we’ve seen this batch)
+      const weeks = [...new Set(catFull.owners.flatMap((o) => Object.keys(o.weekly)))].sort((a, b) => a - b);
+      catFull.weeks = weeks.map(Number);
     }
   } catch (e) {
-    if (e?.name === "PAUSE") {
-      log("⏸ Pausing to avoid subrequest cap; run Live again to continue.");
-    } else {
-      throw e;
-    }
+    if (e?.name !== "PAUSE") throw e; // real error should bubble
+    // else: we paused intentionally to avoid the cap
   }
 
-  // 3) Write leaderboards.json (whatever we have so far is valid JSON)
-  // If the request paused early, this will be a partial (still helpful for debugging / preview).
+  // Write partial snapshots (valid JSON even if not finished)
   await put("leaderboards.json", JSON.stringify(fullData, null, 2));
 
-  // 4) Chunk weekly data
+  // Chunk weekly data (partial ok)
   const MAX_CHUNK = 23 * 1024 * 1024;
   let idx = 1, chunk = {}, size = 0;
-
   const writePart = async () => {
     await put(`weekly_rosters_part${idx}.json`, JSON.stringify(chunk));
-    log(`✅ Wrote part ${idx} (~${(size / 1024 / 1024).toFixed(2)} MiB)`);
     idx++; chunk = {}; size = 0;
   };
 
@@ -287,18 +275,15 @@ export async function generateAll(env, log = () => {}, isCanceled = () => false)
         chunk[year][cat] = weeklyData[year][cat];
         size += catBytes;
       } else {
-        // split by league if needed
         for (const leagueName of Object.keys(weeklyData[year][cat])) {
           const leaguePart = { [year]: { [cat]: { [leagueName]: weeklyData[year][cat][leagueName] } } };
           const leagueBytes = new TextEncoder().encode(JSON.stringify(leaguePart)).length;
-
           if (leagueBytes > MAX_CHUNK) {
             if (size > 0) await writePart();
             chunk = leaguePart; size = leagueBytes;
             await writePart();
             continue;
           }
-
           if (size + leagueBytes > MAX_CHUNK && size > 0) await writePart();
           if (!chunk[year]) chunk[year] = {};
           if (!chunk[year][cat]) chunk[year][cat] = {};
@@ -310,5 +295,9 @@ export async function generateAll(env, log = () => {}, isCanceled = () => false)
   }
   if (Object.keys(chunk).length) await writePart();
 
-  return { manifest };
+  return {
+    manifest,
+    cursor: finished() ? null : { i }, // next index to start with on the next request
+    done: finished(),
+  };
 }
