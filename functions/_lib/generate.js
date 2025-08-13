@@ -37,7 +37,6 @@ function buildWorkList() {
   }
   return items;
 }
-function sizeOfJSON(obj){ return new TextEncoder().encode(JSON.stringify(obj)).length; }
 async function r2GetJSON(bucket, key, fallback = {}) {
   const obj = await bucket.get(key); if (!obj) return fallback;
   const txt = await obj.text(); try { return JSON.parse(txt); } catch { return fallback; }
@@ -47,6 +46,12 @@ async function kvGetJSON(kv, key, fallback = {}) {
   if (!txt) return fallback;
   try { return JSON.parse(txt); } catch { return fallback; }
 }
+// stringify once, reuse bytes
+function strBody(obj) {
+  const body = JSON.stringify(obj);
+  return { body, bytes: body.length };
+}
+
 function uniqPushOwner(arr, item) {
   if (!arr.__idx) arr.__idx = new Map();
   const key = `${item.leagueName}::${item.ownerName}`;
@@ -109,21 +114,28 @@ export async function generateAll(env, log = () => {}, isCanceled = () => false,
   if (i < 0) i = 0;
   if (i >= work.length) return { manifest: [], cursor: null, done: true };
 
-  const put = async (key, value) => {
+  const put = async (key, bodyStr) => {
     if (isCanceled()) { ac.abort(); throw new Error("Canceled"); }
-    const bytes = typeof value === "string" ? new TextEncoder().encode(value).length : value?.byteLength ?? String(value).length;
-    await env.LEADERBOARDS.put(key, value);
-    log(`💾 wrote ${key} (${(bytes/1024/1024).toFixed(2)} MiB)`);
-    return { key, bytes };
+    await env.LEADERBOARDS.put(key, bodyStr);
+    log(`💾 wrote ${key} (${(bodyStr.length/1024/1024).toFixed(2)} MiB)`);
+    return { key, bytes: bodyStr.length };
   };
 
-  // players DB once
+  // players DB (first batch): fetch once and save a compact map { id: full_name }
   if (i === 0) {
     const playersDB = await fetchWithRetry("https://api.sleeper.app/v1/players/nfl", RETRIES, fetch, signal);
-    await put("sleeper_players.json", JSON.stringify(playersDB));
+    const min = {};
+    for (const [id, p] of Object.entries(playersDB)) {
+      // keep only the full name (add pos/team later if needed)
+      min[id] = p?.full_name || "";
+    }
+    const { body: minBody } = strBody(min);
+    await put("players_min.json", minBody);
   }
-  const playersRes = await env.LEADERBOARDS.get("sleeper_players.json");
-  if (!playersRes) throw new Error("sleeper_players.json missing in R2");
+
+  // load compact players map every batch
+  const playersRes = await env.LEADERBOARDS.get("players_min.json");
+  if (!playersRes) throw new Error("players_min.json missing in R2");
   const playersDB = JSON.parse(await playersRes.text());
 
   // one league per batch
@@ -171,9 +183,9 @@ export async function generateAll(env, log = () => {}, isCanceled = () => false,
     ms.forEach(m => {
       const ownerId = rosterMap[m.roster_id]; if (!ownerId) return;
       const name = userMap[ownerId];
-      const starters = (m.starters || []).map((id,i)=>({ id, name: playersDB[id]?.full_name || id, points: m.starters_points?.[i] || 0 }));
+      const starters = (m.starters || []).map((id,i)=>({ id, name: playersDB[id] || id, points: m.starters_points?.[i] || 0 }));
       const bench = Object.keys(m.players_points || {}).filter(id => !m.starters?.includes(id))
-        .map(id => ({ id, name: playersDB[id]?.full_name || id, points: m.players_points[id] }));
+        .map(id => ({ id, name: playersDB[id] || id, points: m.players_points[id] }));
       weeklyRosters[week].push({ ownerName: name, starters, bench });
       const pts = (m.starters_points || []).reduce((a,b)=>a+b,0);
       const o = ensureOwner(name); o.weekly[week] = Number(pts.toFixed(2)); o.draftSlot = o.draftSlot ?? (draftSlotMap[ownerId] || null);
@@ -188,9 +200,9 @@ export async function generateAll(env, log = () => {}, isCanceled = () => false,
   if (latestMatchups.length) {
     for (const o of ownersByName.values()) {
       const m = latestMatchups.find(mx => userMap[rosterMap[mx.roster_id]] === o.ownerName); if (!m) continue;
-      const starters = (m.starters || []).map((id,i)=>({ id, name: playersDB[id]?.full_name || id, points: m.starters_points?.[i] || 0 }));
+      const starters = (m.starters || []).map((id,i)=>({ id, name: playersDB[id] || id, points: m.starters_points?.[i] || 0 }));
       const bench = Object.keys(m.players_points || {}).filter(id => !m.starters?.includes(id))
-        .map(id => ({ id, name: playersDB[id]?.full_name || id, points: m.players_points[id] }));
+        .map(id => ({ id, name: playersDB[id] || id, points: m.players_points[id] }));
       o.latestRoster = { week: latestWeek, starters, bench };
     }
   }
@@ -212,35 +224,40 @@ export async function generateAll(env, log = () => {}, isCanceled = () => false,
   };
   const shardWeeklyAdd = { [w.year]: { [w.category]: { [leagueName]: weeklyRosters } } };
 
-  // ensure shard is recorded
-  // NEW (correct: KV read)
-const shardList = await kvGetJSON(env.CONFIG_KV, SHARD_LIST_FULL, []);
+  // ensure shard is recorded (KV, not R2)
+  const shardList = await kvGetJSON(env.CONFIG_KV, SHARD_LIST_FULL, []);
   if (!shardList.find(s => s.year === w.year && s.category === w.category)) {
     shardList.push({ year: w.year, category: w.category });
     await env.CONFIG_KV.put(SHARD_LIST_FULL, JSON.stringify(shardList));
   }
 
-  // ---- write FULL shard ----
+  // ---- write FULL shard (compact JSON, no double stringify) ----
   const fullKey = `leaderboards/${w.year}/${w.category}.json`;
   const existingFullShard = await r2GetJSON(env.LEADERBOARDS, fullKey, { [w.year]: { [w.category]: undefined } });
   const mergedFullShard = mergeShardFull(existingFullShard, shardFullAdd, w.year, w.category, w.displayName, divisionsList);
-  await env.LEADERBOARDS.put(fullKey, JSON.stringify(mergedFullShard, null, 2));
-  log(`💾 wrote ${fullKey} (${(sizeOfJSON(mergedFullShard)/1024/1024).toFixed(2)} MiB)`);
+  const { body: fullBody, bytes: fullBytes } = strBody(mergedFullShard);
+  await put(fullKey, fullBody);
 
-  // ---- write WEEKLY shard part ----
+  // ---- write WEEKLY shard part (roll when needed) ----
   const weeklyPartIdxKey = `WEEKLY_PART_IDX:${w.year}:${w.category}`;
   let partIdx = Number(await env.CONFIG_KV.get(weeklyPartIdxKey)) || 1;
   const weeklyKey = (n) => `weekly/${w.year}/${w.category}/part${n}.json`;
 
   const curPart = await r2GetJSON(env.LEADERBOARDS, weeklyKey(partIdx), { [w.year]: { [w.category]: {} } });
   const attempt = mergeWeeklyShard(curPart, shardWeeklyAdd, w.year, w.category);
-  if (sizeOfJSON(attempt) <= MAX_CHUNK) {
-    await env.LEADERBOARDS.put(weeklyKey(partIdx), JSON.stringify(attempt));
-    log(`💾 wrote ${weeklyKey(partIdx)} (${(sizeOfJSON(attempt)/1024/1024).toFixed(2)} MiB)`);
+  const { body: attemptBody, bytes: attemptBytes } = strBody(attempt);
+
+  let weeklyBytes = attemptBytes;
+  let weeklyKeyWritten = weeklyKey(partIdx);
+
+  if (attemptBytes <= MAX_CHUNK) {
+    await put(weeklyKey(partIdx), attemptBody);
   } else {
     partIdx += 1; await env.CONFIG_KV.put(weeklyPartIdxKey, String(partIdx));
-    await env.LEADERBOARDS.put(weeklyKey(partIdx), JSON.stringify(shardWeeklyAdd));
-    log(`💾 rolled ${weeklyKey(partIdx)} (${(sizeOfJSON(shardWeeklyAdd)/1024/1024).toFixed(2)} MiB)`);
+    const { body: freshBody, bytes: freshBytes } = strBody(shardWeeklyAdd);
+    await put(weeklyKey(partIdx), freshBody);
+    weeklyKeyWritten = weeklyKey(partIdx);
+    weeklyBytes = freshBytes;
   }
 
   // advance cursor & finish this batch
@@ -249,8 +266,8 @@ const shardList = await kvGetJSON(env.CONFIG_KV, SHARD_LIST_FULL, []);
 
   return {
     manifest: [
-      { key: fullKey, bytes: sizeOfJSON(mergedFullShard) },
-      { key: weeklyKey(partIdx), bytes: sizeOfJSON(await r2GetJSON(env.LEADERBOARDS, weeklyKey(partIdx), {})) }
+      { key: fullKey, bytes: fullBytes },
+      { key: weeklyKeyWritten, bytes: weeklyBytes }
     ],
     cursor: nextI >= work.length ? null : { i: nextI },
     done: nextI >= work.length
