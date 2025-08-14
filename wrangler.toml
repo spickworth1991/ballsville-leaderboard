@@ -2,13 +2,22 @@ name = "ballsville-leaderboard"
 compatibility_date = "2024-08-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Tell Pages where next-on-pages puts the static output
-pages_build_output_dir = ".vercel/output/static"
+# Tell Wrangler where your static build is (Pages output).
+# If you’re not using a build step, you can point this to "public"
+# and put index.html there.
+pages_build_output_dir = "public"
 
-# R2: JSON lives here
+# ===== Bindings =====
+
+# KV: only used if you later want metadata; safe to keep or remove.
+[[kv_namespaces]]
+binding = "CONFIG_KV"
+id = "2da9d70241d343d5aa35ef9651777c63"
+preview_id = "2da9d70241d343d5aa35ef9651777c63"
+
+# R2 bucket that stores your JSONs
 [[r2_buckets]]
 binding = "LEADERBOARDS"
 bucket_name = "leaderboard-data"
 
 [vars]
-# (Optional) add any public vars for the frontend here
