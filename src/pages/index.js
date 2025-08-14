@@ -14,14 +14,20 @@ export default function Home() {
   const [showWeeks, setShowWeeks] = useState(false);
   const [filteredData, setFilteredData] = useState(null);
 
-  // Load JSON
-  useEffect(() => {
-    fetch('/data/leaderboards.json')
-      .then((res) => res.json())
-      .then((json) => {
-        setLeaderboards(json);
 
-        // pick an initial valid mode for 2025 if big_game is not present
+    // Load JSON + auto-refresh when ETag changes
+  useEffect(() => {
+    let aborted = false;
+    let currentEtag = null;
+    const url = '/data/leaderboards.json';
+
+    async function load() {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) return;
+      currentEtag = res.headers.get('ETag');
+      const json = await res.json();
+      if (!aborted) {
+        setLeaderboards(json);
         const yearBlock = json?.['2025'] || {};
         const modes = Object.keys(yearBlock);
         const initialMode =
@@ -30,16 +36,30 @@ export default function Home() {
           (modes.includes('redraft') && 'redraft') ||
           modes[0];
 
-        setCurrent((prev) => ({
-          ...prev,
-          mode: initialMode || prev.mode
-        }));
+        setCurrent(prev => ({ ...prev, mode: initialMode || prev.mode }));
+        if (initialMode) setFilteredData(yearBlock[initialMode]);
+      }
+    }
 
-        if (initialMode) {
-          setFilteredData(yearBlock[initialMode]);
-        }
-      });
+    async function checkForUpdate() {
+      // Lightweight HEAD check to compare ETag
+      const head = await fetch(url, { method: 'HEAD', cache: 'no-store' });
+      if (!head.ok) return;
+      const etag = head.headers.get('ETag');
+      if (etag && etag !== currentEtag) {
+        await load(); // ETag changed → pull fresh JSON
+      }
+    }
+
+    load();
+
+    const interval = setInterval(checkForUpdate, 30000); // 30s
+    return () => {
+      aborted = true;
+      clearInterval(interval);
+    };
   }, []);
+
 
   // Normalize mode whenever year changes or the mode becomes invalid
   useEffect(() => {
