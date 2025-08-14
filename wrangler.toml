@@ -1,33 +1,23 @@
 name = "ballsville-leaderboard"
-# Pin a recent date; doesn't have to match exactly
 compatibility_date = "2024-08-01"
 compatibility_flags = ["nodejs_compat"]
 
-# Let Wrangler know where the Pages build artifacts land
-# (what next-on-pages generates)
-pages_build_output_dir = ".vercel/output/static"
+# Tell Wrangler where your static build is (Pages output).
+# If you’re not using a build step, you can point this to "public"
+# and put index.html there.
+pages_build_output_dir = "public"
 
 # ===== Bindings =====
 
-# KV: used to store schedule + last_run_ts
+# KV: only used if you later want metadata; safe to keep or remove.
 [[kv_namespaces]]
 binding = "CONFIG_KV"
-# Replace with your actual namespace IDs from Dashboard → Workers KV
 id = "2da9d70241d343d5aa35ef9651777c63"
 preview_id = "2da9d70241d343d5aa35ef9651777c63"
 
-# R2: where JSON files live (leaderboards.json, weekly_rosters_part*.json, etc.)
+# R2 bucket that stores your JSONs
 [[r2_buckets]]
 binding = "LEADERBOARDS"
 bucket_name = "leaderboard-data"
-# If you created a separate preview bucket, set it here; otherwise you can omit:
-# preview_bucket_name = "leaderboard-data"
 
-# Environment vars (handy for local dev; in Cloudflare Pages UI you can also set them)
 [vars]
-ADMIN_USER = "Boss"
-
-
-limits = { cpu_ms = 300000 }  # 5 minutes
-
-

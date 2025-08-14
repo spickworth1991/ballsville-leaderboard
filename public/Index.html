@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Leaderboards Viewer</title>
+<style>
+  :root { color-scheme: light dark }
+  body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 900px }
+  button { padding: .5rem .75rem; border: 1px solid #ccc; border-radius: .375rem; cursor: pointer }
+  pre { white-space: pre-wrap; background: #111; color: #eee; padding: 1rem; border-radius: .5rem; max-height: 60vh; overflow: auto }
+  .row { display: flex; gap: .5rem; align-items: center; margin-bottom: .75rem }
+  input { padding: .45rem .6rem; border: 1px solid #ccc; border-radius: .375rem; width: 360px }
+</style>
+
+<h1>Leaderboards — R2 Reader</h1>
+
+<div class="row">
+  <button id="btnL">Load leaderboards.json</button>
+  <button id="btnM">Load weekly_manifest.json</button>
+</div>
+
+<div class="row">
+  <input id="partName" placeholder="weekly_rosters_part1.json" />
+  <button id="btnP">Load part</button>
+</div>
+
+<h3>Output</h3>
+<pre id="out"></pre>
+
+<script>
+const $ = id => document.getElementById(id);
+const show = (obj) => { $('out').textContent = JSON.stringify(obj, null, 2) };
+
+$('btnL').onclick = async () => {
+  const r = await fetch('/data/leaderboards.json');
+  show(await r.json());
+};
+
+$('btnM').onclick = async () => {
+  const r = await fetch('/data/weekly_manifest.json');
+  show(await r.json());
+};
+
+$('btnP').onclick = async () => {
+  const name = $('partName').value.trim();
+  if (!name) return;
+  const r = await fetch('/data/' + encodeURIComponent(name));
+  show(await r.json());
+};
+</script>
+</html>
