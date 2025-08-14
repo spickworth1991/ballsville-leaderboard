@@ -1,3 +1,4 @@
+// functions/api/update-stream.js
 import { generateAll } from '../_lib/generate.js';
 import { verifySession } from '../_lib/auth.js';
 import { createRun, endRun } from '../_lib/run-state.js';
@@ -28,31 +29,30 @@ export default async function handler(req, ctx) {
       try {
         send({ type: 'start', runId: id, at: Date.now() });
 
-        const logs = [];
-        const { manifest, cursor, done } = await generateAll(
+        const { cursor, done, rotate } = await generateAll(
           env,
-          (msg) => { logs.push(msg); send({ type: 'log', msg }); },
+          (msg) => { send({ type: 'log', msg }); },
           isCanceled
         );
 
-        // You can emit the manifest for this batch
-        if (manifest && manifest.length) send({ type: 'manifest', manifest });
-
-        // If we’re not done, tell the client to pause/reconnect (NOT an error)
-        if (!done) {
-          send({ type: 'pause' });
-        } else {
+        if (done) {
           send({ type: 'done' });
+        } else if (rotate) {
+          // hard rotate: client should close & reconnect
+          send({ type: 'rotate' });
+        } else {
+          // fallback (shouldn’t normally hit now)
+          send({ type: 'rotate' });
         }
       } catch (e) {
         const s = String(e || '');
-        // Treat our cooperative budget exit as a PAUSE, not an error
-        if ((e && e.name === 'PAUSE') || s.includes('PAUSE')) {
-          send({ type: 'pause' });
+        if (e && (e.name === 'ROTATE' || s.includes('ROTATE'))) {
+          // cooperative rotate signal from generator
+          controller.enqueue(line({ type: 'rotate' }));
         } else if (s.includes('Canceled')) {
-          send({ type: 'canceled' });
+          controller.enqueue(line({ type: 'canceled' }));
         } else {
-          send({ type: 'error', error: s });
+          controller.enqueue(line({ type: 'error', error: s }));
         }
       } finally {
         clearInterval(heartbeat);

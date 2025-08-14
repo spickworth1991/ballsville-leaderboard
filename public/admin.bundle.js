@@ -42,25 +42,19 @@ function startLiveOnce() {
       if (data.type === 'start') { currentRunId = data.runId; append('Started ' + new Date(data.at).toLocaleString()); }
       if (data.type === 'log') append(data.msg);
       if (data.type === 'manifest') renderManifest(data.manifest || []);
-      if (data.type === 'pause') {
-        append('⏸ Paused to avoid subrequest cap — continuing…');
-        // close this SSE and immediately start another batch
+      if (data.type === 'rotate') {
+        // Hard rotate: close now, immediately start a fresh connection
         try { es.close(); } catch {}
         es = null;
-        // slight delay so the previous request fully finishes on the edge
-        setTimeout(() => {
-          if (liveLoopActive) startLiveOnce();
-        }, 100);
+        if (liveLoopActive) setTimeout(startLiveOnce, 50);
       }
       if (data.type === 'done') { append('✅ Done'); cleanup(); }
       if (data.type === 'canceled') { append('⏸ Canceled'); cleanup(); }
       if (data.type === 'error') { append('❌ ' + data.error); cleanup(); }
     } catch { append(e.data); }
   };
-  // We intentionally do NOT treat onerror as fatal; the server closes between batches.
-  es.onerror = () => {
-    append('…');
-  };
+  // don't treat onerror as fatal (edge closes between rotates)
+  es.onerror = () => { /* no-op */ };
 }
 
 function startLiveLoop() {
@@ -101,9 +95,7 @@ window.addEventListener('DOMContentLoaded', () => {
     } finally { setBusy(false); }
   };
 
-  $('btnLive').onclick = () => {
-    startLiveLoop();
-  };
+  $('btnLive').onclick = () => { startLiveLoop(); };
 
   $('btnCancel').onclick = async () => {
     if (!currentRunId) return;

@@ -1,51 +1,36 @@
 // functions/_lib/generate.js
 import { LEAGUE_MAP } from "./league_map.js";
 
-/**
- * Strategy
- * - Process up to MAX_LEAGUES_PER_INVOCATION leagues each run.
- * - Strict subrequest budgeting:
- *    * Each fetch/kv/r2 put is a "subrequest" (Free limit ~50).
- *    * Reserve headroom before starting a league so we never pause after work but before writing/advancing.
- *    * If headroom dips after finishing a league, advance the cursor *early* to avoid replay loops.
- * - Sharded outputs:
- *    * FULL:  R2 key "leaderboards/{year}/{category}.json"
- *    * WEEKLY: R2 key "weekly/{year}/{category}/part{n}.json" with rolling when size would exceed MAX_CHUNK
- */
-
-//// Tunables /////////////////////////////////////////////////////////////////
-
+/** Tunables */
 const RETRIES = 3;
 const MAX_WEEKS = 18;
+const MAX_LEAGUES_PER_INVOCATION = 8;
 
-// Subrequest budgeting (Free plan: 50/request)
-const SUBREQ_BUDGET = 48;              // keep below 50 to be safe
-const SUBREQ_RESERVE_PER_LEAGUE = 24;  // worst-case estimate per league (fetches+writes)
-const FINAL_RESERVE = 6;               // room to write shards + cursor safely at end
+// Subrequests (Free plan has 50/request). Keep our own budget smaller.
+const SUBREQ_BUDGET = 48;
+const SUBREQ_RESERVE_PER_LEAGUE = 24;  // fetches + R2/KV writes worst-case
+const FINAL_RESERVE = 6;               // safe room for final KV put etc.
 
-const MAX_LEAGUES_PER_INVOCATION = 8;  // process up to 8 leagues per run
+// Soft wall time: end request proactively and rotate
+const SOFT_WALL_MS = 20_000;
 
-// Output sizing
-const MAX_CHUNK = 23 * 1024 * 1024;    // ~23 MiB weekly part
+/** Output sizing */
+const MAX_CHUNK = 23 * 1024 * 1024; // ~23 MiB weekly part
 
-// KV keys
-const CURSOR_KEY = "run_cursor_v3";
-const SHARD_LIST_FULL = "shard_list_full_v3"; // JSON: [{year,category}...]
+/** KV keys */
+const CURSOR_KEY = "run_cursor_rotate_v1";
+const SHARD_LIST_FULL = "shard_list_full_v1"; // JSON: [{year,category}...]
 
-//// Subrequest counter ///////////////////////////////////////////////////////
-
+/** Subrequest counter */
 let subreqCount = 0;
 function tickSubreq() {
   if (++subreqCount >= SUBREQ_BUDGET) {
-    const e = new Error("PAUSE");
-    e.name = "PAUSE";
-    throw e;
+    const e = new Error("ROTATE"); e.name = "ROTATE"; throw e;
   }
 }
 const remainingBudget = () => Math.max(0, SUBREQ_BUDGET - subreqCount);
 
-//// Utilities ////////////////////////////////////////////////////////////////
-
+/** Utils */
 async function fetchWithRetry(url, retries = RETRIES, f = fetch, signal) {
   for (let i = 0; i < retries; i++) {
     if (signal?.aborted) throw new Error("Canceled");
@@ -96,40 +81,33 @@ async function kvGetJSON(kv, key, fallback = {}) {
 function uniqPushOwner(arr, item) {
   if (!arr.__idx) arr.__idx = new Map();
   const key = `${item.leagueName}::${item.ownerName}`;
-  if (!arr.__idx.has(key)) {
-    arr.__idx.set(key, arr.length);
-    arr.push(item);
-  } else {
+  if (!arr.__idx.has(key)) { arr.__idx.set(key, arr.length); arr.push(item); }
+  else {
     const ex = arr[arr.__idx.get(key)];
     ex.total = item.total ?? ex.total ?? 0;
-    ex.weekly = { ...(ex.weekly || {}), ...(item.weekly || {}) };
+    ex.weekly = { ...(ex.weekly||{}), ...(item.weekly||{}) };
     if (item.latestRoster) ex.latestRoster = item.latestRoster;
     ex.draftSlot = ex.draftSlot ?? item.draftSlot ?? null;
   }
 }
 
-// Merge FULL shard payload into existing (single year/category shard object)
 function mergeShardFull(existing, add, year, category, displayName, divisionsList) {
   const dst = existing[year]?.[category] ?? {
-    name: displayName,
-    weeks: [],
-    owners: [],
-    divisions: divisionsList,
-    leaguesByDivision: {}
+    name: displayName, weeks: [], owners: [], divisions: divisionsList, leaguesByDivision: {}
   };
   const src = add[year][category];
 
   // weeks
-  const wk = new Set([...(dst.weeks || []), ...(src.weeks || [])]);
-  dst.weeks = [...wk].map(Number).sort((a, b) => a - b);
+  const wk = new Set([...(dst.weeks||[]), ...(src.weeks||[])]);
+  dst.weeks = [...wk].map(Number).sort((a,b)=>a-b);
 
   // divisions & leagues
-  dst.divisions = Array.from(new Set([...(dst.divisions || []), ...divisionsList]));
+  dst.divisions = Array.from(new Set([...(dst.divisions||[]), ...divisionsList]));
   dst.leaguesByDivision ??= {};
   for (const [div, names] of Object.entries(src.leaguesByDivision || {})) {
     dst.leaguesByDivision[div] ??= [];
     const s = new Set(dst.leaguesByDivision[div]);
-    (names || []).forEach(n => s.add(n));
+    (names||[]).forEach(n => s.add(n));
     dst.leaguesByDivision[div] = [...s];
   }
 
@@ -141,7 +119,6 @@ function mergeShardFull(existing, add, year, category, displayName, divisionsLis
   return { [year]: { [category]: dst } };
 }
 
-// Merge WEEKLY shard payload into existing (single year/category shard object)
 function mergeWeeklyShard(existing, add, year, category) {
   const dst = existing[year]?.[category] ?? {};
   const src = add[year][category] || {};
@@ -151,13 +128,14 @@ function mergeWeeklyShard(existing, add, year, category) {
   return { [year]: { [category]: dst } };
 }
 
-//// Main /////////////////////////////////////////////////////////////////////
-
+/** Main */
 export async function generateAll(env, log = () => {}, isCanceled = () => false, startCursor = null) {
   if (!env?.LEADERBOARDS?.put) throw new Error("LEADERBOARDS binding missing");
   if (!env?.CONFIG_KV) throw new Error("CONFIG_KV binding missing");
 
+  const startTs = Date.now();
   subreqCount = 0;
+
   const ac = new AbortController();
   const signal = ac.signal;
   const work = buildWorkList();
@@ -168,17 +146,16 @@ export async function generateAll(env, log = () => {}, isCanceled = () => false,
   if (i < 0) i = 0;
   if (i >= work.length) return { manifest: [], cursor: null, done: true };
 
-  // Helper: R2 put (counts as subrequest)
   const putR2 = async (key, value) => {
     if (isCanceled()) { ac.abort(); throw new Error("Canceled"); }
     const bytes = typeof value === "string" ? new TextEncoder().encode(value).length : value?.byteLength ?? String(value).length;
     tickSubreq();
     await env.LEADERBOARDS.put(key, value);
-    log(`💾 wrote ${key} (${(bytes / 1024 / 1024).toFixed(2)} MiB)`);
+    log(`💾 wrote ${key} (${(bytes/1024/1024).toFixed(2)} MiB)`);
     return { key, bytes };
   };
 
-  // Players DB once per new run start
+  // Players DB once per run start
   if (i === 0) {
     const playersDB = await fetchWithRetry("https://api.sleeper.app/v1/players/nfl", RETRIES, fetch, signal);
     await putR2("sleeper_players.json", JSON.stringify(playersDB));
@@ -191,31 +168,38 @@ export async function generateAll(env, log = () => {}, isCanceled = () => false,
   const playersDB = JSON.parse(await playersRes.text());
 
   const manifest = [];
-  let leaguesDoneThisInvocation = 0;
+  let doneNow = false;
+  let leaguesDone = 0;
 
-  // Process up to MAX_LEAGUES_PER_INVOCATION leagues this request
-  while (i < work.length && leaguesDoneThisInvocation < MAX_LEAGUES_PER_INVOCATION) {
+  // Helper: should we rotate before starting next league?
+  const shouldRotate = () => {
+    const wall = Date.now() - startTs;
+    if (wall >= SOFT_WALL_MS) return true;
+    // leave room to finish one more league cleanly
+    if (remainingBudget() < (SUBREQ_RESERVE_PER_LEAGUE + FINAL_RESERVE)) return true;
+    return false;
+  };
+
+  while (i < work.length && leaguesDone < MAX_LEAGUES_PER_INVOCATION) {
     if (isCanceled()) { ac.abort(); throw new Error("Canceled"); }
-
-    // Ensure enough headroom to fully process a league *and* safely write/advance
-    const need = SUBREQ_RESERVE_PER_LEAGUE + FINAL_RESERVE;
-    if (remainingBudget() < need) {
-      log(`PAUSE: headroom low (${remainingBudget()}/${SUBREQ_BUDGET}); need ≥ ${need} to start next league`);
-      break;
-    }
+    if (shouldRotate() && leaguesDone > 0) break; // rotate now (after finishing at least one league)
 
     const w = work[i];
+
+    // If starting a brand-new league, ensure headroom right now
+    if (remainingBudget() < (SUBREQ_RESERVE_PER_LEAGUE + FINAL_RESERVE)) break;
+
     const base = `https://api.sleeper.app/v1/league/${w.leagueId}`;
     const info = await fetchWithRetry(base, RETRIES, fetch, signal);
     const leagueName = info.name;
-    log(`Processing ${leagueName} - ${w.division} - ${w.displayName} - ${i + 1}/${work.length}`);
+    log(`Processing ${leagueName} - ${w.division} - ${w.displayName} - ${i+1}/${work.length}`);
 
     const users   = await fetchWithRetry(`${base}/users`,   RETRIES, fetch, signal);
     const rosters = await fetchWithRetry(`${base}/rosters`, RETRIES, fetch, signal);
     const userMap = {}; users.forEach(u => userMap[u.user_id] = u.display_name);
     const rosterMap = {}; rosters.forEach(r => rosterMap[r.roster_id] = r.owner_id);
 
-    // Draft slots (best-effort)
+    // draft slots (best-effort)
     const draftSlotMap = {};
     try {
       const drafts = await fetchWithRetry(`${base}/drafts`, RETRIES, fetch, signal);
@@ -228,7 +212,7 @@ export async function generateAll(env, log = () => {}, isCanceled = () => false,
       }
     } catch {}
 
-    // Matchups by week
+    // matchups
     const matchupsByWeek = {};
     for (let week = 1; week <= MAX_WEEKS; week++) {
       const ms = await fetchWithRetry(`${base}/matchups/${week}`, RETRIES, fetch, signal);
@@ -238,7 +222,7 @@ export async function generateAll(env, log = () => {}, isCanceled = () => false,
     const latestWeek = findLatestWeek(matchupsByWeek);
     const latestMatchups = latestWeek ? matchupsByWeek[latestWeek] : [];
 
-    // Assemble owners + weekly
+    // owners and weekly
     const ownersByName = new Map();
     const ensureOwner = (name) => {
       if (!ownersByName.has(name)) ownersByName.set(name, {
@@ -253,40 +237,29 @@ export async function generateAll(env, log = () => {}, isCanceled = () => false,
       ms.forEach(m => {
         const ownerId = rosterMap[m.roster_id]; if (!ownerId) return;
         const name = userMap[ownerId];
-        const starters = (m.starters || []).map((id, i) => ({
-          id, name: playersDB[id]?.full_name || id, points: m.starters_points?.[i] || 0
-        }));
-        const bench = Object.keys(m.players_points || {})
-          .filter(id => !m.starters?.includes(id))
+        const starters = (m.starters || []).map((id,i)=>({ id, name: playersDB[id]?.full_name || id, points: m.starters_points?.[i] || 0 }));
+        const bench = Object.keys(m.players_points || {}).filter(id => !m.starters?.includes(id))
           .map(id => ({ id, name: playersDB[id]?.full_name || id, points: m.players_points[id] }));
         weeklyRosters[week].push({ ownerName: name, starters, bench });
-
-        const pts = (m.starters_points || []).reduce((a, b) => a + b, 0);
-        const o = ensureOwner(name);
-        o.weekly[week] = Number(pts.toFixed(2));
-        o.draftSlot = o.draftSlot ?? (draftSlotMap[ownerId] || null);
+        const pts = (m.starters_points || []).reduce((a,b)=>a+b,0);
+        const o = ensureOwner(name); o.weekly[week] = Number(pts.toFixed(2)); o.draftSlot = o.draftSlot ?? (draftSlotMap[ownerId] || null);
       });
     }
 
-    // Season totals
+    // totals
     rosters.forEach(r => {
       const ownerId = r.owner_id; if (!ownerId) return;
       const name = userMap[ownerId];
-      const total = parseFloat(`${r.settings.fpts}.${String(r.settings.fpts_decimal).padStart(2, "0")}`);
-      const o = ensureOwner(name);
-      o.total = total;
-      o.draftSlot = o.draftSlot ?? (draftSlotMap[ownerId] || null);
+      const total = parseFloat(`${r.settings.fpts}.${String(r.settings.fpts_decimal).padStart(2,"0")}`);
+      const o = ensureOwner(name); o.total = total; o.draftSlot = o.draftSlot ?? (draftSlotMap[ownerId] || null);
     });
 
-    // Latest roster snapshot
+    // latest roster
     if (latestMatchups.length) {
       for (const o of ownersByName.values()) {
         const m = latestMatchups.find(mx => userMap[rosterMap[mx.roster_id]] === o.ownerName); if (!m) continue;
-        const starters = (m.starters || []).map((id, i) => ({
-          id, name: playersDB[id]?.full_name || id, points: m.starters_points?.[i] || 0
-        }));
-        const bench = Object.keys(m.players_points || {})
-          .filter(id => !m.starters?.includes(id))
+        const starters = (m.starters || []).map((id,i)=>({ id, name: playersDB[id]?.full_name || id, points: m.starters_points?.[i] || 0 }));
+        const bench = Object.keys(m.players_points || {}).filter(id => !m.starters?.includes(id))
           .map(id => ({ id, name: playersDB[id]?.full_name || id, points: m.players_points[id] }));
         o.latestRoster = { week: latestWeek, starters, bench };
       }
@@ -295,21 +268,20 @@ export async function generateAll(env, log = () => {}, isCanceled = () => false,
     const owners = [...ownersByName.values()];
     const divisionsList = Object.keys(LEAGUE_MAP[w.year][w.category].divisions);
 
-    // Build per-shard payloads
     const shardFullAdd = {
       [w.year]: {
         [w.category]: {
           name: w.displayName,
-          weeks: [...new Set(owners.flatMap(o => Object.keys(o.weekly)))].map(Number).sort((a, b) => a - b),
+          weeks: [...new Set(owners.flatMap(o => Object.keys(o.weekly)))].map(Number).sort((a,b)=>a-b),
           owners,
           divisions: divisionsList,
-          leaguesByDivision: { [w.division]: [leagueName] }
+          leaguesByDivision: { [w.division]: [info.name] }
         }
       }
     };
-    const shardWeeklyAdd = { [w.year]: { [w.category]: { [leagueName]: weeklyRosters } } };
+    const shardWeeklyAdd = { [w.year]: { [w.category]: { [info.name]: weeklyRosters } } };
 
-    // Ensure shard list recorded (KV)
+    // shard list
     const shardList = await kvGetJSON(env.CONFIG_KV, SHARD_LIST_FULL, []);
     if (!shardList.find(s => s.year === w.year && s.category === w.category)) {
       shardList.push({ year: w.year, category: w.category });
@@ -317,13 +289,13 @@ export async function generateAll(env, log = () => {}, isCanceled = () => false,
       await env.CONFIG_KV.put(SHARD_LIST_FULL, JSON.stringify(shardList));
     }
 
-    // ---- write FULL shard ----
+    // full shard write
     const fullKey = `leaderboards/${w.year}/${w.category}.json`;
     const existingFullShard = await r2GetJSON(env.LEADERBOARDS, fullKey, { [w.year]: { [w.category]: undefined } });
     const mergedFullShard = mergeShardFull(existingFullShard, shardFullAdd, w.year, w.category, w.displayName, divisionsList);
-    manifest.push(await putR2(fullKey, JSON.stringify(mergedFullShard, null, 2)));
+    await putR2(fullKey, JSON.stringify(mergedFullShard, null, 2));
 
-    // ---- write WEEKLY shard part ----
+    // weekly part write/roll
     const weeklyPartIdxKey = `WEEKLY_PART_IDX:${w.year}:${w.category}`;
     tickSubreq();
     let partIdx = Number(await env.CONFIG_KV.get(weeklyPartIdxKey)) || 1;
@@ -332,35 +304,32 @@ export async function generateAll(env, log = () => {}, isCanceled = () => false,
     const curPart = await r2GetJSON(env.LEADERBOARDS, weeklyKey(partIdx), { [w.year]: { [w.category]: {} } });
     const attempt = mergeWeeklyShard(curPart, shardWeeklyAdd, w.year, w.category);
     if (sizeOfJSON(attempt) <= MAX_CHUNK) {
-      manifest.push(await putR2(weeklyKey(partIdx), JSON.stringify(attempt)));
+      await putR2(weeklyKey(partIdx), JSON.stringify(attempt));
     } else {
       partIdx += 1;
       tickSubreq();
       await env.CONFIG_KV.put(weeklyPartIdxKey, String(partIdx));
-      manifest.push(await putR2(weeklyKey(partIdx), JSON.stringify(shardWeeklyAdd)));
+      await putR2(weeklyKey(partIdx), JSON.stringify(shardWeeklyAdd));
     }
 
-    // Finished one league
+    // advance cursor after finishing this league
     i += 1;
-    leaguesDoneThisInvocation += 1;
+    leaguesDone += 1;
 
-    // If headroom is skinny now, advance cursor early so reconnect won’t replay this league
-    if (remainingBudget() < (FINAL_RESERVE + 3)) {
-      tickSubreq();
-      await env.CONFIG_KV.put(CURSOR_KEY, String(i));
-      log(`Cursor advanced early to ${i} (headroom ${remainingBudget()}/${SUBREQ_BUDGET})`);
-      break; // stop now; we'll resume cleanly next run
-    }
+    // update cursor now (so reconnection never replays)
+    tickSubreq();
+    await env.CONFIG_KV.put(CURSOR_KEY, String(i));
+
+    // If we’re near the wall/budget, rotate now
+    if (shouldRotate()) break;
   }
 
-  // Final cursor write for this batch
-  tickSubreq();
-  await env.CONFIG_KV.put(CURSOR_KEY, String(i));
+  if (i >= work.length) doneNow = true;
 
-  const done = i >= work.length;
   return {
-    manifest,
-    cursor: done ? null : { i },
-    done
+    manifest: [],
+    cursor: doneNow ? null : { i },
+    done: doneNow,
+    rotate: !doneNow && (Date.now() - startTs >= SOFT_WALL_MS || remainingBudget() < FINAL_RESERVE)
   };
 }
