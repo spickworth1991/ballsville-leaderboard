@@ -1,6 +1,3 @@
-// pages/api/data/[...key].js
-import { getRequestContext } from "@cloudflare/next-on-pages";
-
 export const config = { runtime: "edge" };
 
 function noStore(extra = {}) {
@@ -13,16 +10,33 @@ function noStore(extra = {}) {
   };
 }
 
+async function getBucket() {
+  // Prefer the native env import for Edge (no Node shims)
+  try {
+    const mod = await import("cloudflare:env");
+    if (mod?.env?.LEADERBOARDS) return mod.env.LEADERBOARDS;
+  } catch (_) { /* ignore */ }
+
+  // Fallback: next-on-pages context (only if available)
+  try {
+    const mod = await import("@cloudflare/next-on-pages");
+    const bucket = mod.getRequestContext?.().env?.LEADERBOARDS;
+    if (bucket) return bucket;
+  } catch (_) { /* ignore */ }
+
+  return null;
+}
+
 export default async function handler(req) {
   try {
     const url = new URL(req.url);
     let key = url.pathname.replace(/^\/api\/data\//, "");
-    if (key === "leaderboard.json") key = "leaderboards.json"; // alias
+    if (key === "leaderboard.json") key = "leaderboards.json"; // alias singular→plural
 
     if (req.method === "OPTIONS") {
-      return new Response(null, { headers: noStore({ "Access-Control-Max-Age": "86400", "X-Debug":"options" }) });
+      return new Response(null, { headers: noStore({ "Access-Control-Max-Age": "86400", "X-Debug": "options" }) });
     }
-    if (req.method !== "GET" && req.method !== "HEAD") {
+    if (!["GET", "HEAD"].includes(req.method)) {
       return new Response("Method Not Allowed", { status: 405, headers: { Allow: "GET, HEAD, OPTIONS" } });
     }
     if (!key || key.endsWith("/")) {
@@ -32,8 +46,7 @@ export default async function handler(req) {
       });
     }
 
-    const { env } = getRequestContext();
-    const bucket = env?.LEADERBOARDS;
+    const bucket = await getBucket();
     if (!bucket) {
       return new Response(JSON.stringify({ error: "Missing R2 binding LEADERBOARDS" }), {
         status: 500,
@@ -52,7 +65,6 @@ export default async function handler(req) {
     const etag = head.httpEtag || head.etag || "";
     const lastMod = head.uploaded ? new Date(head.uploaded).toUTCString() : new Date().toUTCString();
 
-    // Conditionals
     const inm = req.headers.get("If-None-Match");
     if (inm && etag && inm.replace(/^W\//, "") === etag.replace(/^W\//, "")) {
       return new Response(null, { status: 304, headers: noStore({ ETag: etag, "Last-Modified": lastMod, "X-Debug-Key": key }) });
@@ -82,7 +94,7 @@ export default async function handler(req) {
     }
     return new Response(await obj.arrayBuffer(), { headers: noStore(base) });
   } catch (e) {
-    return new Response(JSON.stringify({ error: String(e && e.message || e) }), {
+    return new Response(JSON.stringify({ error: String(e?.message || e) }), {
       status: 500,
       headers: noStore({ "Content-Type": "application/json; charset=utf-8", "X-Debug": "exception" }),
     });

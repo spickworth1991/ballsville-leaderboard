@@ -1,6 +1,6 @@
 name = "ballsville-leaderboard"
 compatibility_date = "2024-08-01"
-compatibility_flags = ["nodejs_compat"]
+
 
 # Tell Wrangler where your static build is (Pages output).
 # If you’re not using a build step, you can point this to "public"
