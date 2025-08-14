@@ -1,9 +1,9 @@
 /*.json
-  Cache-Control: public, max-age=3600, stale-while-revalidate=59
+  Cache-Control: public, max-age=5, stale-while-revalidate=30
   Access-Control-Allow-Origin: *
 
 /data/*
-  Cache-Control: public, max-age=3600, stale-while-revalidate=59
+  Cache-Control: public, max-age=5, stale-while-revalidate=30
   Access-Control-Allow-Origin: *
 
 /*.png

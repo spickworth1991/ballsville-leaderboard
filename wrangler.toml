@@ -5,7 +5,7 @@ compatibility_flags = ["nodejs_compat"]
 # Tell Wrangler where your static build is (Pages output).
 # If you’re not using a build step, you can point this to "public"
 # and put index.html there.
-pages_build_output_dir = "public"
+pages_build_output_dir = ".vercel/output/static"
 
 # ===== Bindings =====
 
