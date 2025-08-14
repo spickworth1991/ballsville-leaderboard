@@ -78,22 +78,37 @@ async function handleUpdateStream(req, env) {
         send({ type: "start", runId: id, at: Date.now() });
 
         const logs = [];
-        const { manifest } = await generateAll(
+        // IMPORTANT: generateAll must write to R2 *as it goes* and advance the cursor in KV.
+        // It should throw e.name === "PAUSE" when the subrequest budget is reached.
+        const { manifest, done } = await generateAll(
           env,
           (msg) => { logs.push(msg); send({ type: "log", msg }); },
           isCanceled
         );
 
         await env.CONFIG_KV.put("last_run_ts", Date.now().toString());
-        send({ type: "manifest", manifest });
-        send({ type: "done" });
+        if (manifest && manifest.length) send({ type: "manifest", manifest });
+
+        // If not finished, we *rotate* (tell client to reconnect) instead of “done”.
+        if (!done) {
+          send({ type: "rotate" });
+        } else {
+          send({ type: "done" });
+        }
       } catch (e) {
-        if (String(e).includes("Canceled")) send({ type: "canceled" });
-        else send({ type: "error", error: String(e) });
+        const s = String(e || "");
+        // Treat generator’s PAUSE as a soft-rotate
+        if ((e && e.name === "PAUSE") || s.includes("PAUSE")) {
+          send({ type: "rotate" });
+        } else if (s.includes("Canceled")) {
+          send({ type: "canceled" });
+        } else {
+          send({ type: "error", error: s });
+        }
       } finally {
         clearInterval(heartbeat);
         endRun(id);
-        controller.close();
+        controller.close(); // <— CLOSE so the browser can immediately reconnect
       }
     },
   });

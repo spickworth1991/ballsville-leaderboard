@@ -63,7 +63,7 @@
 
 <script>
 const $=(id)=>document.getElementById(id);
-let es=null, currentRunId=null;
+let es=null, currentRunId=null, liveLoopActive=false;
 
 function showAdminUI(){
   $('loginCard').style.display='none';
@@ -82,6 +82,56 @@ function append(msg){ const el=$('logs'); el.textContent+=(msg+'\\n'); el.scroll
 function clearLogs(){ $('logs').textContent=''; $('result').innerHTML=''; }
 function setBusy(b){ $('btnOne').disabled=b; $('btnLive').disabled=b; $('btnCancel').disabled=!b; }
 
+function renderManifest(m){
+  const items=(m||[]).map(x=>{
+    const url='/data/'+encodeURIComponent(x.key);
+    const mb=(x.bytes/1024/1024).toFixed(2);
+    return '<li><a href="'+url+'" target="_blank">'+x.key+'</a> — '+mb+' MiB</li>';
+  }).join('');
+  $('result').innerHTML = items ? ('<h4>Files written</h4><ul>'+items+'</ul>') : '';
+}
+
+function startLiveOnce(){
+  append('Connecting (live)...');
+  es = new EventSource('/api/update-stream');
+
+  es.onmessage = (e)=>{
+    try{
+      const data = JSON.parse(e.data);
+      if(data.type==='start'){ currentRunId=data.runId; append('Started '+new Date(data.at).toLocaleString()); }
+      if(data.type==='log') append(data.msg);
+      if(data.type==='manifest') renderManifest(data.manifest||[]);
+      if(data.type==='rotate'){
+        // server says: close now + reconnect immediately
+        try{ es.close(); }catch{}
+        es = null;
+        if (liveLoopActive) setTimeout(startLiveOnce, 50);
+        return;
+      }
+      if(data.type==='done'){ append('✅ Done'); cleanup(); return; }
+      if(data.type==='canceled'){ append('⏸ Canceled'); cleanup(); return; }
+      if(data.type==='error'){ append('❌ '+data.error); cleanup(); return; }
+    }catch{ append(e.data); }
+  };
+
+  // we *don’t* kill the loop on onerror; edge will close between rotations
+  es.onerror = ()=>{ /* no-op */ };
+}
+
+function startLiveLoop(){
+  if (liveLoopActive) return;
+  liveLoopActive = true;
+  clearLogs(); setBusy(true);
+  startLiveOnce();
+}
+
+function cleanup(){
+  liveLoopActive = false;
+  if(es){ try{ es.close(); }catch{} es=null; }
+  currentRunId = null; setBusy(false);
+}
+
+// --- existing click handlers, left as-is except btnLive:
 $('loginBtn').onclick = async (e)=>{
   e.preventDefault();
   const r = await fetch('/api/login', {
@@ -104,42 +154,19 @@ $('btnOne').onclick = async ()=>{
   }finally{ setBusy(false); }
 };
 
-$('btnLive').onclick = ()=>{
-  clearLogs(); setBusy(true);
-  append('Connecting (live)...');
-  es = new EventSource('/api/update-stream');
-  es.onmessage = (e)=>{
-    try{
-      const data = JSON.parse(e.data);
-      if(data.type==='start'){ currentRunId=data.runId; append('Started '+new Date(data.at).toLocaleString()); }
-      if(data.type==='log') append(data.msg);
-      if(data.type==='manifest') renderManifest(data.manifest||[]);
-      if(data.type==='done'){ append('✅ Done'); cleanup(); }
-      if(data.type==='canceled'){ append('⏸ Canceled'); cleanup(); }
-      if(data.type==='error'){ append('❌ '+data.error); cleanup(); }
-    }catch{ append(e.data); }
-  };
-  es.onerror = ()=>{ append('❌ stream error'); cleanup(); };
-};
+$('btnLive').onclick = ()=>{ startLiveLoop(); };
 
 $('btnCancel').onclick = async ()=>{
   if(!currentRunId) return;
   append('Sending cancel...');
   try{
-    await fetch('/api/cancel-run', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ runId: currentRunId }) });
+    await fetch('/api/cancel-run', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ runId: currentRunId })
+    });
   }catch{}
 };
-
-function cleanup(){ if(es){ try{ es.close(); }catch{} es=null; } currentRunId=null; setBusy(false); }
-
-function renderManifest(m){
-  const items=m.map(x=>{
-    const url='/data/'+encodeURIComponent(x.key);
-    const mb=(x.bytes/1024/1024).toFixed(2);
-    return '<li><a href="'+url+'" target="_blank">'+x.key+'</a> — '+mb+' MiB</li>';
-  }).join('');
-  $('result').innerHTML='<h4>Files written</h4><ul>'+items+'</ul>';
-}
 
 $('saveSchedule').onclick = async ()=>{
   const body = {
@@ -155,4 +182,5 @@ $('saveSchedule').onclick = async ()=>{
 
 checkSession();
 </script>
+
 </html>

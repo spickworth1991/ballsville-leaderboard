@@ -1,50 +1,44 @@
 // functions/_lib/generate.js
 import { LEAGUE_MAP } from "./league_map.js";
 
-/** Tunables */
-const RETRIES = 3;
+// ---------- Tunables ----------
 const MAX_WEEKS = 18;
-const MAX_LEAGUES_PER_INVOCATION = 8;
+const RETRIES = 3;
 
-// Subrequests (Free plan has 50/request). Keep our own budget smaller.
-const SUBREQ_BUDGET = 48;
-const SUBREQ_RESERVE_PER_LEAGUE = 24;  // fetches + R2/KV writes worst-case
-const FINAL_RESERVE = 6;               // safe room for final KV put etc.
+// External subrequests (Sleeper API) per invocation.
+// We stop around here so the request ends *before* hitting limits.
+const EXT_SUBREQ_BUDGET = 48;
 
-// Soft wall time: end request proactively and rotate
-const SOFT_WALL_MS = 20_000;
+// Cursor & flags
+const CURSOR_KEY = "run_cursor_v3";
+const DONE_PREFIX = "done"; // KV key: done:{year}:{category}:{leagueId}
 
-/** Output sizing */
-const MAX_CHUNK = 23 * 1024 * 1024; // ~23 MiB weekly part
+// R2 shard locations
+const FULL_SHARD_PREFIX   = "leaderboards_shards"; // /{year}/{category}/{leagueId}.json
+const WEEKLY_SHARD_PREFIX = "weekly_shards";       // /{year}/{category}/{leagueId}.json
 
-/** KV keys */
-const CURSOR_KEY = "run_cursor_rotate_v1";
-const SHARD_LIST_FULL = "shard_list_full_v1"; // JSON: [{year,category}...]
-
-/** Subrequest counter */
-let subreqCount = 0;
-function tickSubreq() {
-  if (++subreqCount >= SUBREQ_BUDGET) {
-    const e = new Error("ROTATE"); e.name = "ROTATE"; throw e;
+// ---------- Helpers ----------
+let extSubreqCount = 0;
+function tickExternal() {
+  extSubreqCount++;
+  if (extSubreqCount >= EXT_SUBREQ_BUDGET) {
+    const e = new Error("PAUSE"); e.name = "PAUSE"; throw e;
   }
 }
-const remainingBudget = () => Math.max(0, SUBREQ_BUDGET - subreqCount);
 
-/** Utils */
-async function fetchWithRetry(url, retries = RETRIES, f = fetch, signal) {
+async function fetchWithRetry(url, { signal } = {}, retries = RETRIES) {
   for (let i = 0; i < retries; i++) {
-    if (signal?.aborted) throw new Error("Canceled");
-    tickSubreq();
-    const res = await f(url, signal ? { signal } : undefined);
+    tickExternal();
+    const res = await fetch(url, signal ? { signal } : undefined);
     if (res.ok) return res.json();
     if (i === retries - 1) throw new Error(`${res.status} ${res.statusText} for ${url}`);
-    await new Promise(r => setTimeout(r, 500 * (i + 1)));
+    await new Promise(r => setTimeout(r, 400 * (i + 1)));
   }
 }
 
-const findLatestWeek = (map) => {
-  const weeks = Object.keys(map).map(Number);
-  return weeks.length ? Math.max(...weeks) : null;
+const latestWeekOf = (byWeek) => {
+  const ns = Object.keys(byWeek).map(Number);
+  return ns.length ? Math.max(...ns) : null;
 };
 
 function buildWorkList() {
@@ -61,168 +55,108 @@ function buildWorkList() {
   return items;
 }
 
-function sizeOfJSON(obj) { return new TextEncoder().encode(JSON.stringify(obj)).length; }
-
-async function r2GetJSON(bucket, key, fallback = {}) {
-  tickSubreq();
-  const obj = await bucket.get(key);
-  if (!obj) return fallback;
-  const txt = await obj.text();
-  try { return JSON.parse(txt); } catch { return fallback; }
+async function kvGetNumber(kv, key, fallback = 0) {
+  const raw = await kv.get(key);
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
 }
+const sizeOf = (obj) => new TextEncoder().encode(typeof obj === "string" ? obj : JSON.stringify(obj)).length;
 
-async function kvGetJSON(kv, key, fallback = {}) {
-  tickSubreq();
-  const txt = await kv.get(key);
-  if (!txt) return fallback;
-  try { return JSON.parse(txt); } catch { return fallback; }
-}
-
-function uniqPushOwner(arr, item) {
-  if (!arr.__idx) arr.__idx = new Map();
-  const key = `${item.leagueName}::${item.ownerName}`;
-  if (!arr.__idx.has(key)) { arr.__idx.set(key, arr.length); arr.push(item); }
-  else {
-    const ex = arr[arr.__idx.get(key)];
-    ex.total = item.total ?? ex.total ?? 0;
-    ex.weekly = { ...(ex.weekly||{}), ...(item.weekly||{}) };
-    if (item.latestRoster) ex.latestRoster = item.latestRoster;
-    ex.draftSlot = ex.draftSlot ?? item.draftSlot ?? null;
-  }
-}
-
-function mergeShardFull(existing, add, year, category, displayName, divisionsList) {
-  const dst = existing[year]?.[category] ?? {
-    name: displayName, weeks: [], owners: [], divisions: divisionsList, leaguesByDivision: {}
-  };
-  const src = add[year][category];
-
-  // weeks
-  const wk = new Set([...(dst.weeks||[]), ...(src.weeks||[])]);
-  dst.weeks = [...wk].map(Number).sort((a,b)=>a-b);
-
-  // divisions & leagues
-  dst.divisions = Array.from(new Set([...(dst.divisions||[]), ...divisionsList]));
-  dst.leaguesByDivision ??= {};
-  for (const [div, names] of Object.entries(src.leaguesByDivision || {})) {
-    dst.leaguesByDivision[div] ??= [];
-    const s = new Set(dst.leaguesByDivision[div]);
-    (names||[]).forEach(n => s.add(n));
-    dst.leaguesByDivision[div] = [...s];
-  }
-
-  // owners
-  dst.owners ??= [];
-  for (const o of (src.owners || [])) uniqPushOwner(dst.owners, o);
-  if (dst.owners.__idx) delete dst.owners.__idx;
-
-  return { [year]: { [category]: dst } };
-}
-
-function mergeWeeklyShard(existing, add, year, category) {
-  const dst = existing[year]?.[category] ?? {};
-  const src = add[year][category] || {};
-  for (const [leagueName, weekly] of Object.entries(src)) {
-    dst[leagueName] = { ...(dst[leagueName] || {}), ...(weekly || {}) };
-  }
-  return { [year]: { [category]: dst } };
-}
-
-/** Main */
+// ---------- Main ----------
 export async function generateAll(env, log = () => {}, isCanceled = () => false, startCursor = null) {
-  if (!env?.LEADERBOARDS?.put) throw new Error("LEADERBOARDS binding missing");
-  if (!env?.CONFIG_KV) throw new Error("CONFIG_KV binding missing");
+  if (!env?.LEADERBOARDS) throw new Error("LEADERBOARDS binding missing");
+  if (!env?.CONFIG_KV)     throw new Error("CONFIG_KV binding missing");
 
-  const startTs = Date.now();
-  subreqCount = 0;
-
+  extSubreqCount = 0;
   const ac = new AbortController();
   const signal = ac.signal;
   const work = buildWorkList();
 
-  // Cursor
-  let i = Number(await (async () => { tickSubreq(); return env.CONFIG_KV.get(CURSOR_KEY); })()) || 0;
+  // cursor
+  let i = await kvGetNumber(env.CONFIG_KV, CURSOR_KEY, 0);
   if (startCursor && typeof startCursor.i === "number") i = startCursor.i;
   if (i < 0) i = 0;
   if (i >= work.length) return { manifest: [], cursor: null, done: true };
 
-  const putR2 = async (key, value) => {
-    if (isCanceled()) { ac.abort(); throw new Error("Canceled"); }
-    const bytes = typeof value === "string" ? new TextEncoder().encode(value).length : value?.byteLength ?? String(value).length;
-    tickSubreq();
-    await env.LEADERBOARDS.put(key, value);
-    log(`💾 wrote ${key} (${(bytes/1024/1024).toFixed(2)} MiB)`);
-    return { key, bytes };
-  };
-
-  // Players DB once per run start
-  if (i === 0) {
-    const playersDB = await fetchWithRetry("https://api.sleeper.app/v1/players/nfl", RETRIES, fetch, signal);
-    await putR2("sleeper_players.json", JSON.stringify(playersDB));
-  }
-
-  // Load players DB
-  tickSubreq();
-  const playersRes = await env.LEADERBOARDS.get("sleeper_players.json");
-  if (!playersRes) throw new Error("sleeper_players.json missing in R2");
-  const playersDB = JSON.parse(await playersRes.text());
-
   const manifest = [];
-  let doneNow = false;
-  let leaguesDone = 0;
-
-  // Helper: should we rotate before starting next league?
-  const shouldRotate = () => {
-    const wall = Date.now() - startTs;
-    if (wall >= SOFT_WALL_MS) return true;
-    // leave room to finish one more league cleanly
-    if (remainingBudget() < (SUBREQ_RESERVE_PER_LEAGUE + FINAL_RESERVE)) return true;
-    return false;
+  const put = async (key, value) => {
+    if (isCanceled()) { ac.abort(); throw new Error("Canceled"); }
+    const body = typeof value === "string" ? value : JSON.stringify(value);
+    await env.LEADERBOARDS.put(key, body);
+    const bytes = sizeOf(body);
+    log(`💾 wrote ${key} (${(bytes/1024/1024).toFixed(2)} MiB)`);
+    manifest.push({ key, bytes });
   };
 
-  while (i < work.length && leaguesDone < MAX_LEAGUES_PER_INVOCATION) {
-    if (isCanceled()) { ac.abort(); throw new Error("Canceled"); }
-    if (shouldRotate() && leaguesDone > 0) break; // rotate now (after finishing at least one league)
+  // Ensure players_min.json (one-time) — we do this once at i===0
+  if (i === 0) {
+    tickExternal();
+    const full = await fetch("https://api.sleeper.app/v1/players/nfl");
+    if (!full.ok) throw new Error(`Failed players DB: ${full.status} ${full.statusText}`);
+    // stream-minimize: only keep fields we actually read (full_name)
+    const db = await full.json();
+    const min = {};
+    for (const [pid, p] of Object.entries(db)) {
+      min[pid] = { full_name: p.full_name || "" };
+    }
+    await put("players_min.json", min);
+  }
+  const playersObj = await env.LEADERBOARDS.get("players_min.json");
+  if (!playersObj) throw new Error("players_min.json missing in R2");
+  const playersDB = JSON.parse(await playersObj.text());
 
+  // Process as many leagues as we can under the *external* subrequest budget.
+  let processed = 0;
+  while (i < work.length) {
+    if (isCanceled()) { ac.abort(); throw new Error("Canceled"); }
     const w = work[i];
 
-    // If starting a brand-new league, ensure headroom right now
-    if (remainingBudget() < (SUBREQ_RESERVE_PER_LEAGUE + FINAL_RESERVE)) break;
+    // Skip if already done (idempotent)
+    const doneKey = `${DONE_PREFIX}:${w.year}:${w.category}:${w.leagueId}`;
+    if (await env.CONFIG_KV.get(doneKey)) {
+      log(`✔ already done ${w.leagueId} (${w.year}/${w.category}) — skipping`);
+      i += 1;
+      continue;
+    }
 
     const base = `https://api.sleeper.app/v1/league/${w.leagueId}`;
-    const info = await fetchWithRetry(base, RETRIES, fetch, signal);
+    const info = await fetchWithRetry(base, { signal });
     const leagueName = info.name;
-    log(`Processing ${leagueName} - ${w.division} - ${w.displayName} - ${i+1}/${work.length}`);
+    log(`Processing ${leagueName} — ${w.displayName} — ${w.year}/${w.category} — ${i+1}/${work.length}`);
 
-    const users   = await fetchWithRetry(`${base}/users`,   RETRIES, fetch, signal);
-    const rosters = await fetchWithRetry(`${base}/rosters`, RETRIES, fetch, signal);
+    const users   = await fetchWithRetry(`${base}/users`,   { signal });
+    const rosters = await fetchWithRetry(`${base}/rosters`, { signal });
+
     const userMap = {}; users.forEach(u => userMap[u.user_id] = u.display_name);
     const rosterMap = {}; rosters.forEach(r => rosterMap[r.roster_id] = r.owner_id);
 
-    // draft slots (best-effort)
+    // Draft (optional)
     const draftSlotMap = {};
     try {
-      const drafts = await fetchWithRetry(`${base}/drafts`, RETRIES, fetch, signal);
+      const drafts = await fetchWithRetry(`${base}/drafts`, { signal });
       const draftId = drafts?.[0]?.draft_id;
       if (draftId) {
-        const draftDetails = await fetchWithRetry(`https://api.sleeper.app/v1/draft/${draftId}`, RETRIES, fetch, signal);
-        if (draftDetails?.draft_order) {
-          Object.entries(draftDetails.draft_order).forEach(([uid, slot]) => { draftSlotMap[uid] = slot; });
+        const dd = await fetchWithRetry(`https://api.sleeper.app/v1/draft/${draftId}`, { signal });
+        if (dd?.draft_order) {
+          for (const [uid, slot] of Object.entries(dd.draft_order)) draftSlotMap[uid] = slot;
         }
       }
-    } catch {}
+    } catch { /* ignore */ }
 
-    // matchups
+    // Weeks
     const matchupsByWeek = {};
     for (let week = 1; week <= MAX_WEEKS; week++) {
-      const ms = await fetchWithRetry(`${base}/matchups/${week}`, RETRIES, fetch, signal);
+      const ms = await fetchWithRetry(`${base}/matchups/${week}`, { signal });
       if (!ms?.length) break;
       matchupsByWeek[week] = ms;
+      // Early clutch exit if budget is getting too tight
+      if (extSubreqCount >= EXT_SUBREQ_BUDGET - 3) break;
     }
-    const latestWeek = findLatestWeek(matchupsByWeek);
+
+    const latestWeek = latestWeekOf(matchupsByWeek);
     const latestMatchups = latestWeek ? matchupsByWeek[latestWeek] : [];
 
-    // owners and weekly
+    // Build per‑league owners & weekly
     const ownersByName = new Map();
     const ensureOwner = (name) => {
       if (!ownersByName.has(name)) ownersByName.set(name, {
@@ -237,99 +171,76 @@ export async function generateAll(env, log = () => {}, isCanceled = () => false,
       ms.forEach(m => {
         const ownerId = rosterMap[m.roster_id]; if (!ownerId) return;
         const name = userMap[ownerId];
-        const starters = (m.starters || []).map((id,i)=>({ id, name: playersDB[id]?.full_name || id, points: m.starters_points?.[i] || 0 }));
-        const bench = Object.keys(m.players_points || {}).filter(id => !m.starters?.includes(id))
+        const starters = (m.starters || []).map((id,i)=>({
+          id, name: playersDB[id]?.full_name || id, points: m.starters_points?.[i] || 0
+        }));
+        const bench = Object.keys(m.players_points || {})
+          .filter(id => !m.starters?.includes(id))
           .map(id => ({ id, name: playersDB[id]?.full_name || id, points: m.players_points[id] }));
         weeklyRosters[week].push({ ownerName: name, starters, bench });
         const pts = (m.starters_points || []).reduce((a,b)=>a+b,0);
-        const o = ensureOwner(name); o.weekly[week] = Number(pts.toFixed(2)); o.draftSlot = o.draftSlot ?? (draftSlotMap[ownerId] || null);
+        const o = ensureOwner(name); o.weekly[week] = Number(pts.toFixed(2));
+        o.draftSlot = o.draftSlot ?? (draftSlotMap[ownerId] || null);
       });
     }
-
-    // totals
+    // season totals
     rosters.forEach(r => {
       const ownerId = r.owner_id; if (!ownerId) return;
       const name = userMap[ownerId];
       const total = parseFloat(`${r.settings.fpts}.${String(r.settings.fpts_decimal).padStart(2,"0")}`);
       const o = ensureOwner(name); o.total = total; o.draftSlot = o.draftSlot ?? (draftSlotMap[ownerId] || null);
     });
-
-    // latest roster
+    // latest roster snapshot
     if (latestMatchups.length) {
       for (const o of ownersByName.values()) {
-        const m = latestMatchups.find(mx => userMap[rosterMap[mx.roster_id]] === o.ownerName); if (!m) continue;
-        const starters = (m.starters || []).map((id,i)=>({ id, name: playersDB[id]?.full_name || id, points: m.starters_points?.[i] || 0 }));
-        const bench = Object.keys(m.players_points || {}).filter(id => !m.starters?.includes(id))
+        const m = latestMatchups.find(mx => userMap[rosterMap[mx.roster_id]] === o.ownerName);
+        if (!m) continue;
+        const starters = (m.starters || []).map((id,i)=>({
+          id, name: playersDB[id]?.full_name || id, points: m.starters_points?.[i] || 0
+        }));
+        const bench = Object.keys(m.players_points || {})
+          .filter(id => !m.starters?.includes(id))
           .map(id => ({ id, name: playersDB[id]?.full_name || id, points: m.players_points[id] }));
         o.latestRoster = { week: latestWeek, starters, bench };
       }
     }
 
     const owners = [...ownersByName.values()];
-    const divisionsList = Object.keys(LEAGUE_MAP[w.year][w.category].divisions);
+    const weeks = [...new Set(owners.flatMap(o => Object.keys(o.weekly)))].map(Number).sort((a,b)=>a-b);
 
-    const shardFullAdd = {
-      [w.year]: {
-        [w.category]: {
-          name: w.displayName,
-          weeks: [...new Set(owners.flatMap(o => Object.keys(o.weekly)))].map(Number).sort((a,b)=>a-b),
-          owners,
-          divisions: divisionsList,
-          leaguesByDivision: { [w.division]: [info.name] }
-        }
-      }
-    };
-    const shardWeeklyAdd = { [w.year]: { [w.category]: { [info.name]: weeklyRosters } } };
+    // ----- Write per‑league shards (R2) -----
+    const fullKey   = `${FULL_SHARD_PREFIX}/${w.year}/${w.category}/${w.leagueId}.json`;
+    const weeklyKey = `${WEEKLY_SHARD_PREFIX}/${w.year}/${w.category}/${w.leagueId}.json`;
 
-    // shard list
-    const shardList = await kvGetJSON(env.CONFIG_KV, SHARD_LIST_FULL, []);
-    if (!shardList.find(s => s.year === w.year && s.category === w.category)) {
-      shardList.push({ year: w.year, category: w.category });
-      tickSubreq();
-      await env.CONFIG_KV.put(SHARD_LIST_FULL, JSON.stringify(shardList));
-    }
+    await put(fullKey, {
+      year: w.year,
+      category: w.category,
+      division: w.division,
+      leagueId: w.leagueId,
+      leagueName,
+      displayName: w.displayName,
+      weeks,
+      owners
+    });
 
-    // full shard write
-    const fullKey = `leaderboards/${w.year}/${w.category}.json`;
-    const existingFullShard = await r2GetJSON(env.LEADERBOARDS, fullKey, { [w.year]: { [w.category]: undefined } });
-    const mergedFullShard = mergeShardFull(existingFullShard, shardFullAdd, w.year, w.category, w.displayName, divisionsList);
-    await putR2(fullKey, JSON.stringify(mergedFullShard, null, 2));
+    await put(weeklyKey, {
+      year: w.year,
+      category: w.category,
+      leagueId: w.leagueId,
+      leagueName,
+      weekly: weeklyRosters
+    });
 
-    // weekly part write/roll
-    const weeklyPartIdxKey = `WEEKLY_PART_IDX:${w.year}:${w.category}`;
-    tickSubreq();
-    let partIdx = Number(await env.CONFIG_KV.get(weeklyPartIdxKey)) || 1;
-    const weeklyKey = (n) => `weekly/${w.year}/${w.category}/part${n}.json`;
-
-    const curPart = await r2GetJSON(env.LEADERBOARDS, weeklyKey(partIdx), { [w.year]: { [w.category]: {} } });
-    const attempt = mergeWeeklyShard(curPart, shardWeeklyAdd, w.year, w.category);
-    if (sizeOfJSON(attempt) <= MAX_CHUNK) {
-      await putR2(weeklyKey(partIdx), JSON.stringify(attempt));
-    } else {
-      partIdx += 1;
-      tickSubreq();
-      await env.CONFIG_KV.put(weeklyPartIdxKey, String(partIdx));
-      await putR2(weeklyKey(partIdx), JSON.stringify(shardWeeklyAdd));
-    }
-
-    // advance cursor after finishing this league
+    // Mark idempotent completion and bump cursor
+    await env.CONFIG_KV.put(doneKey, "1");
     i += 1;
-    leaguesDone += 1;
-
-    // update cursor now (so reconnection never replays)
-    tickSubreq();
     await env.CONFIG_KV.put(CURSOR_KEY, String(i));
+    processed += 1;
 
-    // If we’re near the wall/budget, rotate now
-    if (shouldRotate()) break;
+    // If we’re getting close to budget, politely pause.
+    if (extSubreqCount >= EXT_SUBREQ_BUDGET - 2) break;
   }
 
-  if (i >= work.length) doneNow = true;
-
-  return {
-    manifest: [],
-    cursor: doneNow ? null : { i },
-    done: doneNow,
-    rotate: !doneNow && (Date.now() - startTs >= SOFT_WALL_MS || remainingBudget() < FINAL_RESERVE)
-  };
+  const finished = i >= work.length;
+  return { manifest, cursor: finished ? null : { i }, done: finished };
 }
