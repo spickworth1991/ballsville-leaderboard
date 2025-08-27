@@ -1,3 +1,5 @@
+import { getRequestContext } from "@cloudflare/next-on-pages";
+
 export const config = { runtime: "edge" };
 
 function noStore(extra = {}) {
@@ -10,23 +12,6 @@ function noStore(extra = {}) {
   };
 }
 
-async function getBucket() {
-  // Prefer the native env import for Edge (no Node shims)
-  try {
-    const mod = await import("cloudflare:env");
-    if (mod?.env?.LEADERBOARDS) return mod.env.LEADERBOARDS;
-  } catch (_) { /* ignore */ }
-
-  // Fallback: next-on-pages context (only if available)
-  try {
-    const mod = await import("@cloudflare/next-on-pages");
-    const bucket = mod.getRequestContext?.().env?.LEADERBOARDS;
-    if (bucket) return bucket;
-  } catch (_) { /* ignore */ }
-
-  return null;
-}
-
 export default async function handler(req) {
   try {
     const url = new URL(req.url);
@@ -34,9 +19,9 @@ export default async function handler(req) {
     if (key === "leaderboard.json") key = "leaderboards.json"; // alias singular→plural
 
     if (req.method === "OPTIONS") {
-      return new Response(null, { headers: noStore({ "Access-Control-Max-Age": "86400", "X-Debug": "options" }) });
+      return new Response(null, { headers: noStore({ "Access-Control-Max-Age": "86400", "X-Debug":"options" }) });
     }
-    if (!["GET", "HEAD"].includes(req.method)) {
+    if (!["GET","HEAD"].includes(req.method)) {
       return new Response("Method Not Allowed", { status: 405, headers: { Allow: "GET, HEAD, OPTIONS" } });
     }
     if (!key || key.endsWith("/")) {
@@ -46,7 +31,8 @@ export default async function handler(req) {
       });
     }
 
-    const bucket = await getBucket();
+    const { env } = getRequestContext();
+    const bucket = env?.LEADERBOARDS;
     if (!bucket) {
       return new Response(JSON.stringify({ error: "Missing R2 binding LEADERBOARDS" }), {
         status: 500,
@@ -66,7 +52,7 @@ export default async function handler(req) {
     const lastMod = head.uploaded ? new Date(head.uploaded).toUTCString() : new Date().toUTCString();
 
     const inm = req.headers.get("If-None-Match");
-    if (inm && etag && inm.replace(/^W\//, "") === etag.replace(/^W\//, "")) {
+    if (inm && etag && inm.replace(/^W\//,"") === etag.replace(/^W\//,"")) {
       return new Response(null, { status: 304, headers: noStore({ ETag: etag, "Last-Modified": lastMod, "X-Debug-Key": key }) });
     }
     const ims = req.headers.get("If-Modified-Since");
