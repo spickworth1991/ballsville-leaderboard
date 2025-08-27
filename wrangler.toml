@@ -13,7 +13,7 @@ pages_build_output_dir = ".vercel/output/static"
 [[kv_namespaces]]
 binding = "CONFIG_KV"
 id = "2da9d70241d343d5aa35ef9651777c63"
-preview_id = "2da9d70241d343d5aa35ef9651777c63"
+
 
 # R2 bucket that stores your JSONs
 [[r2_buckets]]

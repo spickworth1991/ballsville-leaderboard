@@ -1,5 +1,3 @@
-import { getRequestContext } from "@cloudflare/next-on-pages";
-
 export const config = { runtime: "edge" };
 
 function noStore(extra = {}) {
@@ -31,8 +29,10 @@ export default async function handler(req) {
       });
     }
 
-    const { env } = getRequestContext();
-    const bucket = env?.LEADERBOARDS;
+    // 🔻 lazy import so if it fails, we can return a JSON error instead of a hard 500
+    const { getRequestContext } = await import("@cloudflare/next-on-pages");
+    const bucket = getRequestContext()?.env?.LEADERBOARDS;
+
     if (!bucket) {
       return new Response(JSON.stringify({ error: "Missing R2 binding LEADERBOARDS" }), {
         status: 500,
@@ -51,6 +51,7 @@ export default async function handler(req) {
     const etag = head.httpEtag || head.etag || "";
     const lastMod = head.uploaded ? new Date(head.uploaded).toUTCString() : new Date().toUTCString();
 
+    // Conditional 304s
     const inm = req.headers.get("If-None-Match");
     if (inm && etag && inm.replace(/^W\//,"") === etag.replace(/^W\//,"")) {
       return new Response(null, { status: 304, headers: noStore({ ETag: etag, "Last-Modified": lastMod, "X-Debug-Key": key }) });
@@ -80,6 +81,7 @@ export default async function handler(req) {
     }
     return new Response(await obj.arrayBuffer(), { headers: noStore(base) });
   } catch (e) {
+    // If import() or anything else blows up, you’ll get a JSON error (not a blank 500)
     return new Response(JSON.stringify({ error: String(e?.message || e) }), {
       status: 500,
       headers: noStore({ "Content-Type": "application/json; charset=utf-8", "X-Debug": "exception" }),
