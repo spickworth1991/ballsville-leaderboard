@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from "react";
 export default function useR2Live({
   manifestUrl = "/data/weekly_manifest.json",
   dataUrl = "/data/leaderboards.json",
-  pollMs = 30000, // 30s
+  pollMs = 480000, // 30s
 } = {}) {
   const [data, setData] = useState(null);
   const [lastChecked, setLastChecked] = useState(null);
