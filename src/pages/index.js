@@ -1,7 +1,8 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Navbar from '../components/Navbar';
 import Leaderboard from '../components/Leaderboard';
+import useR2Live from '../hooks/useR2Live';
 
 export default function Home() {
   const [leaderboards, setLeaderboards] = useState(null);
@@ -9,61 +10,23 @@ export default function Home() {
     year: '2025',
     mode: 'big_game',
     filterType: 'all',
-    filterValue: null
+    filterValue: null,
   });
   const [showWeeks, setShowWeeks] = useState(false);
   const [filteredData, setFilteredData] = useState(null);
 
+  // ✅ Live data from R2 (polls weekly_manifest.json with HEAD; fetches leaderboards.json only when ETag changes)
+  const { data: liveData } = useR2Live();
 
-    // Load JSON + auto-refresh when ETag changes
+  // Whenever live data changes, update the source of truth
   useEffect(() => {
-    let aborted = false;
-    let currentEtag = null;
-    const url = '/data/leaderboards.json';
+    if (liveData) setLeaderboards(liveData);
+  }, [liveData]);
 
-    async function load() {
-      const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) return;
-      currentEtag = res.headers.get('ETag');
-      const json = await res.json();
-      if (!aborted) {
-        setLeaderboards(json);
-        const yearBlock = json?.['2025'] || {};
-        const modes = Object.keys(yearBlock);
-        const initialMode =
-          (modes.includes('big_game') && 'big_game') ||
-          (modes.includes('redraft_2025') && 'redraft_2025') ||
-          (modes.includes('redraft') && 'redraft') ||
-          modes[0];
-
-        setCurrent(prev => ({ ...prev, mode: initialMode || prev.mode }));
-        if (initialMode) setFilteredData(yearBlock[initialMode]);
-      }
-    }
-
-    async function checkForUpdate() {
-      // Lightweight HEAD check to compare ETag
-      const head = await fetch(url, { method: 'HEAD', cache: 'no-store' });
-      if (!head.ok) return;
-      const etag = head.headers.get('ETag');
-      if (etag && etag !== currentEtag) {
-        await load(); // ETag changed → pull fresh JSON
-      }
-    }
-
-    load();
-
-    const interval = setInterval(checkForUpdate, 30000); // 30s
-    return () => {
-      aborted = true;
-      clearInterval(interval);
-    };
-  }, []);
-
-
-  // Normalize mode whenever year changes or the mode becomes invalid
+  // Normalize mode + apply filters whenever inputs change
   useEffect(() => {
     if (!leaderboards) return;
+
     const yearBlock = leaderboards?.[current.year];
     if (!yearBlock) return;
 
@@ -78,20 +41,23 @@ export default function Home() {
         (modes.includes('redraft') && 'redraft') ||
         modes[0];
 
-      setCurrent((prev) => ({ ...prev, mode: nextMode, filterType: 'all', filterValue: null }));
+      // reset filters if mode changes
+      if (nextMode !== current.mode) {
+        setCurrent(prev => ({ ...prev, mode: nextMode, filterType: 'all', filterValue: null }));
+      }
     }
 
     const fullData = yearBlock[nextMode];
     let filteredOwners = [...(fullData?.owners || [])];
 
     if (current.filterType === 'division') {
-      filteredOwners = filteredOwners.filter((o) => o.division === current.filterValue);
+      filteredOwners = filteredOwners.filter(o => o.division === current.filterValue);
     } else if (current.filterType === 'league') {
-      filteredOwners = filteredOwners.filter((o) => o.leagueName === current.filterValue);
+      filteredOwners = filteredOwners.filter(o => o.leagueName === current.filterValue);
     }
 
     setFilteredData({ ...fullData, owners: filteredOwners });
-  }, [current.year, current.mode, current.filterType, current.filterValue, leaderboards]);
+  }, [leaderboards, current.year, current.mode, current.filterType, current.filterValue]);
 
   if (!leaderboards) return <p className="text-center mt-8">Loading...</p>;
 
@@ -110,6 +76,7 @@ export default function Home() {
         <h1 className="text-4xl font-bold text-center mb-6 text-indigo-500">
           {title} {current.filterType !== 'all' ? ` - ${current.filterValue}` : ''}
         </h1>
+
         {filteredData && (
           <Leaderboard
             data={filteredData}
@@ -119,7 +86,6 @@ export default function Home() {
             setShowWeeks={setShowWeeks}
           />
         )}
-
       </div>
     </div>
   );
