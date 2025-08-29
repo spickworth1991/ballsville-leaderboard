@@ -1,8 +1,12 @@
-// Define presets for common embeds
+// src/initConfig.js
+
+// Define presets for each game type
 export const PRESETS = {
-  default: { year: 2025, mode: "big_game", division: null },
-  blog:    { year: 2025, mode: "mini_game", division: null },
-  shop:    { year: 2024, mode: "triathlon", division: "North" },
+  default:    { year: 2025, mode: "big_game",   division: null },
+  minigame:   { year: 2025, mode: "mini_game",  division: null },
+  redraft:    { year: 2025, mode: "redraft",    division: null },
+  triathlon:  { year: 2025, mode: "triathlon",  division: null },
+  dynasty:    { year: 2025, mode: "dynasty",    division: null },
 };
 
 export function getInitialConfig() {
