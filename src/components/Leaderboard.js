@@ -1,9 +1,14 @@
 // src/components/Leaderboard.jsx
 import { useRef, useState, useEffect, useMemo } from "react";
 import { useLeaderboard } from "../context/LeaderboardContext";
+import { getInitialConfig } from "../initConfig";
 import OwnerModal from "./OwnerModal";
 
 export default function Leaderboard({ data, year, category, showWeeks, setShowWeeks }) {
+  const initial = useMemo(() => getInitialConfig(), []);
+  const [year, setYear] = useState(initial.year);
+  const [mode, setMode] = useState(initial.mode);
+  const [division, setDivision] = useState(initial.division);
   const { statsByYear } = useLeaderboard();
   const { totalTeams = 0, uniqueOwners = 0 } = statsByYear?.[year] || {};
 
