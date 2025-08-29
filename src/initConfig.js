@@ -1,16 +1,17 @@
 // src/initConfig.js
 
-// Define presets for each game type
+// Game-type presets you can call with ?preset=<key>
 export const PRESETS = {
-  default:    { year: 2025, mode: "big_game",   division: null },
-  minigame:   { year: 2025, mode: "mini_game",  division: null },
-  redraft:    { year: 2025, mode: "redraft",    division: null },
-  triathlon:  { year: 2025, mode: "triathlon",  division: null },
-  dynasty:    { year: 2025, mode: "dynasty",    division: null },
+  default:   { year: 2025, mode: "big_game",  division: null },
+  minigame:  { year: 2025, mode: "mini_game", division: null },
+  redraft:   { year: 2025, mode: "redraft",   division: null },
+  triathlon: { year: 2025, mode: "triathlon", division: null },
+  dynasty:   { year: 2025, mode: "dynasty",   division: null },
 };
 
 export function getInitialConfig() {
-  if (typeof window === "undefined") return PRESETS.default; // SSR safety
+  // SSR safety
+  if (typeof window === "undefined") return PRESETS.default;
 
   const sp = new URLSearchParams(window.location.search);
   const presetKey = sp.get("preset") || "default";
