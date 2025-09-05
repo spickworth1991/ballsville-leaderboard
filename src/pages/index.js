@@ -1,3 +1,4 @@
+// pages/index.js
 'use client';
 import { useEffect, useState } from 'react';
 import Navbar from '../components/Navbar';
@@ -5,18 +6,48 @@ import Leaderboard from '../components/Leaderboard';
 import useR2Live from '../hooks/useR2Live';
 import useAvailableYears from '../hooks/useAvailableYears';
 
-const BASE_PATH = '/data'; // <- matches your Cloudflare route to R2
+const BASE_PATH = '/data'; // must match your Cloudflare route to R2
+
+// Compute live weekly + total for an owner row
+function computeLiveOwner(o) {
+  const weekly = { ...(o.weekly || {}) };
+  const weekNums = Object.keys(weekly).map(n => Number(n)).filter(Number.isFinite);
+  const latestWeek = weekNums.length ? Math.max(...weekNums) : null;
+
+  // If latest week is 0 but we have live starters points, use them
+  if (latestWeek != null) {
+    const wkVal = Number(weekly[latestWeek] ?? 0);
+    if (wkVal === 0 && Array.isArray(o.latestRoster?.starters) && o.latestRoster.starters.length) {
+      const live = o.latestRoster.starters.reduce((sum, s) => sum + Number(s?.points || 0), 0);
+      if (live > 0) weekly[latestWeek] = Number(live.toFixed(2));
+    }
+  }
+
+  const weeklySum = Object.values(weekly).reduce((a, b) => a + Number(b || 0), 0);
+  const displayTotal =
+    weeklySum > 0
+      ? weeklySum
+      : Number.isFinite(Number(o.total))
+      ? Number(o.total)
+      : 0;
+
+  return {
+    ...o,
+    weekly,
+    total: Number(displayTotal.toFixed(2)), // overwrite so sorting uses live total
+  };
+}
 
 export default function Home() {
+  // Discover only current year + 2 back (under /data)
   const { years, error: yearsError } = useAvailableYears({
-    maxYearsBack: 8,
-    basePath: BASE_PATH,          // 👈 ensure discovery checks /data/...
+    maxYearsBack: 2,
+    basePath: BASE_PATH,
   });
 
-  // Cache of all loaded years, shape: { "2025": {...}, "2024": {...} }
+  // Multi-year cache: { "2025": {...}, "2024": {...} }
   const [leaderboards, setLeaderboards] = useState({});
-  const [loadedYear, setLoadedYear] = useState(null);    // last year we merged in
-  const [loadingYear, setLoadingYear] = useState(null);  // year currently waiting on
+  const [loadingYear, setLoadingYear] = useState(null);
 
   const [current, setCurrent] = useState({
     year: String(new Date().getFullYear()),
@@ -28,46 +59,71 @@ export default function Home() {
   const [showWeeks, setShowWeeks] = useState(false);
   const [filteredData, setFilteredData] = useState(null);
 
-  // When year list arrives, ensure current.year is valid (pick newest if not)
+  // Ensure current.year is one of the discovered years (default to newest)
   useEffect(() => {
     if (!years || !years.length) return;
     if (!years.includes(current.year)) {
       setCurrent(prev => ({
         ...prev,
-        year: years[0], // newest available
+        year: years[0],
         mode: 'big_game',
         filterType: 'all',
         filterValue: null,
       }));
     }
-  }, [years]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [years]);
 
-  // Kick off per-year live fetches (polls manifest and pulls that year’s leaderboards)
+  // One-shot fetch for a specific year (no polling)
+  const fetchYearOnce = async (y) => {
+    try {
+      const base = BASE_PATH.replace(/\/$/, '');
+      const res = await fetch(`${base}/leaderboards_${y}.json`, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`GET leaderboards_${y}.json → ${res.status}`);
+      const yearObj = await res.json();
+      const shaped = yearObj && yearObj[y] ? yearObj : { [y]: yearObj[y] || yearObj };
+      setLeaderboards(prev => ({ ...prev, ...shaped }));
+      if (y === current.year) setLoadingYear(null);
+    } catch (e) {
+      console.error('prefetch failed for year', y, e);
+      if (y === current.year) setLoadingYear(null);
+    }
+  };
+
+  // Prefetch newest + two back as soon as we know the years
+  useEffect(() => {
+    if (!years || !years.length) return;
+    years.slice(0, 3).forEach(y => {
+      if (!leaderboards[y]) fetchYearOnce(y);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [years]);
+
+  // Live updates for the *currently selected* year (polls manifest → refetch on change)
   const { data: liveData, error: liveError } = useR2Live(current.year, {
     pollMs: 60000,
-    basePath: BASE_PATH,          // 👈 ensure fetches /data/weekly_manifest_<y>.json, /data/leaderboards_<y>.json
+    basePath: BASE_PATH,
   });
 
-  // When switching years, if not cached, mark as loading; if cached, clear loading
+  // When switching years: if not cached, fetch immediately
   useEffect(() => {
     if (!current.year) return;
     if (leaderboards?.[current.year]) {
-      setLoadingYear(null); // we already have it, render instantly
+      setLoadingYear(null);
     } else {
-      setLoadingYear(current.year); // show "Loading <year>…" until liveData arrives
+      setLoadingYear(current.year);
+      fetchYearOnce(current.year);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current.year, leaderboards]);
 
-  // Merge newly fetched year into cache; clear loading if it’s the current year
+  // Merge polled data for the active year into cache
   useEffect(() => {
     if (!liveData) return;
-    const y = Object.keys(liveData)[0]; // the year the hook just fetched
     setLeaderboards(prev => ({ ...prev, ...liveData }));
-    setLoadedYear(y);
-    if (y === current.year) setLoadingYear(null);
-  }, [liveData, current.year]);
+  }, [liveData]);
 
-  // Normalize mode + apply filters whenever inputs change
+  // Normalize mode + apply filters + compute live totals
   useEffect(() => {
     const yearBlock = leaderboards?.[current.year];
     if (!yearBlock) {
@@ -97,26 +153,27 @@ export default function Home() {
     const fullData = yearBlock[nextMode];
     let owners = [...(fullData?.owners || [])];
 
-    if (current.filterType === 'division') owners = owners.filter(o => o.division === current.filterValue);
-    else if (current.filterType === 'league') owners = owners.filter(o => o.leagueName === current.filterValue);
+    if (current.filterType === 'division') {
+      owners = owners.filter(o => o.division === current.filterValue);
+    } else if (current.filterType === 'league') {
+      owners = owners.filter(o => o.leagueName === current.filterValue);
+    }
+
+    // Apply live totals logic per owner
+    owners = owners.map(computeLiveOwner);
 
     setFilteredData({ ...fullData, owners });
   }, [leaderboards, current.year, current.mode, current.filterType, current.filterValue]);
 
-  // Loading / error states (friendlier and no “No data” flicker)
+  // UI states
   if (!years) return <p className="text-center mt-8">Loading years…</p>;
   if (!years.length) return <p className="text-center mt-8">No leaderboard years found.</p>;
   if (yearsError) return <p className="text-center mt-8">Error discovering years: {String(yearsError)}</p>;
   if (liveError) return <p className="text-center mt-8">Error loading {current.year}: {String(liveError)}</p>;
 
   const yearBlock = leaderboards?.[current.year];
-
   if (!yearBlock) {
-    // If the manifest said this year exists but we haven't fetched it yet, show a loading message
-    if (loadingYear === current.year) {
-      return <p className="text-center mt-8">Loading {current.year}…</p>;
-    }
-    // Otherwise truly no data
+    if (loadingYear === current.year) return <p className="text-center mt-8">Loading {current.year}…</p>;
     return <p className="text-center mt-8">No data for {current.year}.</p>;
   }
 
@@ -125,7 +182,7 @@ export default function Home() {
   return (
     <div>
       <Navbar
-        data={leaderboards}      // 👈 now a multi-year cache
+        data={leaderboards}  // multi-year cache (instant switching)
         years={years}
         current={current}
         setCurrent={setCurrent}
