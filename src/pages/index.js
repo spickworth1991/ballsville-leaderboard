@@ -1,4 +1,3 @@
-// pages/index.js
 'use client';
 import { useEffect, useState } from 'react';
 import Navbar from '../components/Navbar';
@@ -6,31 +5,36 @@ import Leaderboard from '../components/Leaderboard';
 import useR2Live from '../hooks/useR2Live';
 import useAvailableYears from '../hooks/useAvailableYears';
 
-const BASE_PATH = '/data'; // 👈 this must match your Cloudflare route to R2
+const BASE_PATH = '/data'; // <- matches your Cloudflare route to R2
 
 export default function Home() {
   const { years, error: yearsError } = useAvailableYears({
     maxYearsBack: 8,
-    basePath: BASE_PATH,            // 👈 add this
+    basePath: BASE_PATH,          // 👈 ensure discovery checks /data/...
   });
 
-  const [leaderboards, setLeaderboards] = useState(null);
+  // Cache of all loaded years, shape: { "2025": {...}, "2024": {...} }
+  const [leaderboards, setLeaderboards] = useState({});
+  const [loadedYear, setLoadedYear] = useState(null);    // last year we merged in
+  const [loadingYear, setLoadingYear] = useState(null);  // year currently waiting on
+
   const [current, setCurrent] = useState({
     year: String(new Date().getFullYear()),
     mode: 'big_game',
     filterType: 'all',
     filterValue: null,
   });
+
   const [showWeeks, setShowWeeks] = useState(false);
   const [filteredData, setFilteredData] = useState(null);
 
-  // keep current.year valid
+  // When year list arrives, ensure current.year is valid (pick newest if not)
   useEffect(() => {
     if (!years || !years.length) return;
     if (!years.includes(current.year)) {
       setCurrent(prev => ({
         ...prev,
-        year: years[0],
+        year: years[0], // newest available
         mode: 'big_game',
         filterType: 'all',
         filterValue: null,
@@ -38,22 +42,44 @@ export default function Home() {
     }
   }, [years]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // per-year live data
+  // Kick off per-year live fetches (polls manifest and pulls that year’s leaderboards)
   const { data: liveData, error: liveError } = useR2Live(current.year, {
     pollMs: 60000,
-    basePath: BASE_PATH,            // 👈 add this
+    basePath: BASE_PATH,          // 👈 ensure fetches /data/weekly_manifest_<y>.json, /data/leaderboards_<y>.json
   });
 
-  useEffect(() => { if (liveData) setLeaderboards(liveData); }, [liveData]);
-
-  // Normalize mode + apply filters
+  // When switching years, if not cached, mark as loading; if cached, clear loading
   useEffect(() => {
-    if (!leaderboards) return;
+    if (!current.year) return;
+    if (leaderboards?.[current.year]) {
+      setLoadingYear(null); // we already have it, render instantly
+    } else {
+      setLoadingYear(current.year); // show "Loading <year>…" until liveData arrives
+    }
+  }, [current.year, leaderboards]);
+
+  // Merge newly fetched year into cache; clear loading if it’s the current year
+  useEffect(() => {
+    if (!liveData) return;
+    const y = Object.keys(liveData)[0]; // the year the hook just fetched
+    setLeaderboards(prev => ({ ...prev, ...liveData }));
+    setLoadedYear(y);
+    if (y === current.year) setLoadingYear(null);
+  }, [liveData, current.year]);
+
+  // Normalize mode + apply filters whenever inputs change
+  useEffect(() => {
     const yearBlock = leaderboards?.[current.year];
-    if (!yearBlock) return;
+    if (!yearBlock) {
+      setFilteredData(null);
+      return;
+    }
 
     const modes = Object.keys(yearBlock);
-    if (!modes.length) return;
+    if (!modes.length) {
+      setFilteredData(null);
+      return;
+    }
 
     let nextMode = current.mode;
     if (!modes.includes(nextMode)) {
@@ -77,23 +103,30 @@ export default function Home() {
     setFilteredData({ ...fullData, owners });
   }, [leaderboards, current.year, current.mode, current.filterType, current.filterValue]);
 
-  // Loading / error states
+  // Loading / error states (friendlier and no “No data” flicker)
   if (!years) return <p className="text-center mt-8">Loading years…</p>;
   if (!years.length) return <p className="text-center mt-8">No leaderboard years found.</p>;
   if (yearsError) return <p className="text-center mt-8">Error discovering years: {String(yearsError)}</p>;
   if (liveError) return <p className="text-center mt-8">Error loading {current.year}: {String(liveError)}</p>;
-  if (!leaderboards) return <p className="text-center mt-8">Loading {current.year}…</p>;
 
   const yearBlock = leaderboards?.[current.year];
-  if (!yearBlock) return <p className="text-center mt-8">No data for {current.year}.</p>;
+
+  if (!yearBlock) {
+    // If the manifest said this year exists but we haven't fetched it yet, show a loading message
+    if (loadingYear === current.year) {
+      return <p className="text-center mt-8">Loading {current.year}…</p>;
+    }
+    // Otherwise truly no data
+    return <p className="text-center mt-8">No data for {current.year}.</p>;
+  }
 
   const title = filteredData?.name || `${current.year}`;
 
   return (
     <div>
       <Navbar
-        data={leaderboards}
-        years={years}                
+        data={leaderboards}      // 👈 now a multi-year cache
+        years={years}
         current={current}
         setCurrent={setCurrent}
         showWeeks={showWeeks}
