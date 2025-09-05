@@ -283,16 +283,20 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
       )}
 
       {/* Modal */}
-      {selectedOwner && (
-        <OwnerModal
-          owner={selectedOwner}
-          selectedRoster={selectedRoster}
-          onClose={() => {
-            setSelectedOwner(null);
-            setSelectedRoster(null);
-          }}
-          allOwners={data.owners}
-        />
+        {selectedOwner && (
+          <OwnerModal
+            owner={selectedOwner}
+            selectedRoster={selectedRoster}
+            onClose={() => {
+              setSelectedOwner(null);
+              setSelectedRoster(null);
+            }}
+            allOwners={data.owners}
+            year={year}            // 👈 from your Leaderboard props
+            mode={category}        // 👈 from your Leaderboard props (e.g. 'big_game')
+            basePath="/data"       // 👈 or your Cloudflare route to R2 files
+          />
+
       )}
     </div>
   );
