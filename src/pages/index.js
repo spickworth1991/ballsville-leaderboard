@@ -1,3 +1,4 @@
+// pages/index.js
 'use client';
 import { useEffect, useState } from 'react';
 import Navbar from '../components/Navbar';
@@ -5,8 +6,13 @@ import Leaderboard from '../components/Leaderboard';
 import useR2Live from '../hooks/useR2Live';
 import useAvailableYears from '../hooks/useAvailableYears';
 
+const BASE_PATH = '/data'; // 👈 this must match your Cloudflare route to R2
+
 export default function Home() {
-  const { years, error: yearsError } = useAvailableYears({ maxYearsBack: 8 }); // tweak window if needed
+  const { years, error: yearsError } = useAvailableYears({
+    maxYearsBack: 8,
+    basePath: BASE_PATH,            // 👈 add this
+  });
 
   const [leaderboards, setLeaderboards] = useState(null);
   const [current, setCurrent] = useState({
@@ -18,13 +24,13 @@ export default function Home() {
   const [showWeeks, setShowWeeks] = useState(false);
   const [filteredData, setFilteredData] = useState(null);
 
-  // When year list arrives, ensure current.year is valid
+  // keep current.year valid
   useEffect(() => {
     if (!years || !years.length) return;
     if (!years.includes(current.year)) {
       setCurrent(prev => ({
         ...prev,
-        year: years[0], // newest available
+        year: years[0],
         mode: 'big_game',
         filterType: 'all',
         filterValue: null,
@@ -32,13 +38,13 @@ export default function Home() {
     }
   }, [years]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Per-year live data from R2
-  const { data: liveData, error: liveError } = useR2Live(current.year);
+  // per-year live data
+  const { data: liveData, error: liveError } = useR2Live(current.year, {
+    pollMs: 60000,
+    basePath: BASE_PATH,            // 👈 add this
+  });
 
-  // Source of truth
-  useEffect(() => {
-    if (liveData) setLeaderboards(liveData); // { "<year>": {...} }
-  }, [liveData]);
+  useEffect(() => { if (liveData) setLeaderboards(liveData); }, [liveData]);
 
   // Normalize mode + apply filters
   useEffect(() => {
