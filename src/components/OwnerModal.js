@@ -2,25 +2,58 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
-export default function OwnerModal({ owner, onClose, allOwners, selectedRoster }) {
+export default function OwnerModal({ owner, onClose, allOwners = [], selectedRoster = null }) {
   const [visible, setVisible] = useState(false);
   const [mounted, setMounted] = useState(false);
 
-  useEffect(() => {
-    setMounted(true);
-    setVisible(true);
-  }, []);
-
+  useEffect(() => { setMounted(true); setVisible(true); }, []);
   if (!owner || !mounted) return null;
 
-  const otherLeagues = allOwners
-    .filter((o) => o.ownerName === owner.ownerName && o.leagueName !== owner.leagueName)
-    .map((o) => ({ name: o.leagueName, total: o.total }))
-    .sort((a, b) => b.total - a.total);
+  // --- Helpers
+  const toNum = (v) => Number.isFinite(Number(v)) ? Number(v) : 0;
 
-  const roster = selectedRoster || owner.latestRoster;
-  const startersTotal = roster ? roster.starters.reduce((sum, p) => sum + (p.points || 0), 0).toFixed(2) : 0;
-  const benchTotal = roster ? roster.bench.reduce((sum, p) => sum + (p.points || 0), 0).toFixed(2) : 0;
+  // Find most-recent non-zero week from owner's weekly map
+  const weeklyMap = owner.weekly || {};
+  const weeksDesc = Object.keys(weeklyMap)
+    .map((w) => Number(w))
+    .filter((w) => Number.isFinite(w))
+    .sort((a, b) => b - a);
+
+  const mostRecentNonZeroWeek = weeksDesc.find((w) => toNum(weeklyMap[w]) > 0) ?? weeksDesc[0] ?? null;
+
+  // Do we have a "live" latestRoster with non-zero starter points?
+  const latestHasPoints = Array.isArray(owner.latestRoster?.starters)
+    ? owner.latestRoster.starters.some((s) => toNum(s?.points) > 0)
+    : false;
+
+  // Choose the best roster & week to show
+  // Priority:
+  // 1) selectedRoster (when you clicked a weekly cell)
+  // 2) latestRoster if it has points
+  // 3) fallback: show latestRoster list but use the mostRecentNonZeroWeek value for week label + totals
+  const chosenRoster = selectedRoster || (latestHasPoints ? owner.latestRoster : owner.latestRoster || null);
+  const chosenWeek =
+    selectedRoster?.week ??
+    (latestHasPoints ? owner.latestRoster?.week : mostRecentNonZeroWeek ?? owner.latestRoster?.week ?? null);
+
+  // Totals
+  const startersTotalNum = chosenRoster
+    ? chosenRoster.starters.reduce((sum, p) => sum + toNum(p.points), 0)
+    : 0;
+  const benchTotalNum = chosenRoster
+    ? chosenRoster.bench.reduce((sum, p) => sum + toNum(p.points), 0)
+    : 0;
+
+  // Display total logic: prefer weekly map for the chosen week if it exists and > 0 (finalized),
+  // otherwise fall back to live starters sum
+  const weeklyValForChosen = chosenWeek != null ? toNum(weeklyMap[chosenWeek]) : 0;
+  const displayWeekPoints = weeklyValForChosen > 0 ? weeklyValForChosen : startersTotalNum;
+
+  // Other leagues (same owner name)
+  const otherLeagues = (allOwners || [])
+    .filter((o) => o.ownerName === owner.ownerName && o.leagueName !== owner.leagueName)
+    .map((o) => ({ name: o.leagueName, total: toNum(o.total) }))
+    .sort((a, b) => b.total - a.total);
 
   const modalContent = (
     <div
@@ -43,40 +76,56 @@ export default function OwnerModal({ owner, onClose, allOwners, selectedRoster }
           League: <span className="text-indigo-400">{owner.leagueName}</span>
         </p>
         <p className="text-center mb-2 sm:mb-4 text-xs sm:text-sm">
-          Draft Slot: <span className="text-yellow-400 font-bold">#{owner.draftSlot || "-"} </span> |{" "}
-          {selectedRoster ? (
+          Draft Slot: <span className="text-yellow-400 font-bold">#{owner.draftSlot || "-"}</span>
+          {"  "}|{" "}
+          {chosenWeek != null ? (
             <>
-              Week {roster.week} Points:{" "}
-              <span className="text-blue-400 font-semibold">{startersTotal}</span>{" "}
-              <span className="text-gray-400">(Total: {owner.total})</span>
+              Week {chosenWeek} Points:{" "}
+              <span className="text-blue-400 font-semibold">{displayWeekPoints.toFixed(2)}</span>{" "}
+              <span className="text-gray-400">(Season Total: {toNum(owner.total).toFixed(2)})</span>
             </>
           ) : (
             <>
-              Total Points: <span className="text-blue-400 font-semibold">{owner.total}</span>
+              Season Total: <span className="text-blue-400 font-semibold">{toNum(owner.total).toFixed(2)}</span>
             </>
           )}
         </p>
 
         {/* Roster */}
-        {roster && (
+        {chosenRoster && (
           <div className="mb-3 sm:mb-6">
             <h3 className="text-sm sm:text-lg font-semibold mb-1 sm:mb-2 text-center text-green-400">
-              {selectedRoster ? `Week ${roster.week} Roster` : `Latest Roster (Week ${roster.week})`}
+              {selectedRoster
+                ? `Week ${chosenWeek} Roster`
+                : `Latest Roster${chosenWeek != null ? ` (Week ${chosenWeek})` : ""}`}
             </h3>
+
+            {/* If the list we have is from a different week than the one whose total we’re showing, indicate it */}
+            {!selectedRoster &&
+              chosenWeek != null &&
+              owner.latestRoster?.week != null &&
+              !latestHasPoints &&
+              owner.latestRoster.week !== chosenWeek && (
+                <p className="text-center text-xs sm:text-sm text-white/60 mb-2">
+                  Showing most recent non-zero week ({chosenWeek}) for totals; lineup list may reflect Week{" "}
+                  {owner.latestRoster.week}.
+                </p>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-4">
               {/* Starters */}
               <div>
                 <h4 className="font-semibold text-blue-400 mb-1 text-xs sm:text-base">Starters</h4>
                 <ul className="border border-gray-700 rounded p-1 sm:p-2 space-y-0.5 sm:space-y-1 text-xs sm:text-sm max-h-28 sm:max-h-64 overflow-y-auto">
-                  {roster.starters.map((p, i) => (
+                  {chosenRoster.starters.map((p, i) => (
                     <li key={i} className="flex justify-between">
                       <span className="truncate">{p.name}</span>
-                      <span className="text-gray-400">{p.points} pts</span>
+                      <span className="text-gray-400">{toNum(p.points).toFixed(2)} pts</span>
                     </li>
                   ))}
                 </ul>
                 <div className="mt-1 sm:mt-2 text-right text-yellow-400 font-bold text-xs sm:text-sm">
-                  Total: {startersTotal} pts
+                  Total: {startersTotalNum.toFixed(2)} pts
                 </div>
               </div>
 
@@ -85,16 +134,16 @@ export default function OwnerModal({ owner, onClose, allOwners, selectedRoster }
                 <h4 className="font-semibold text-gray-300 mb-1 text-xs sm:text-base">Bench</h4>
                 <div className="border border-gray-700 rounded p-1 sm:p-2 overflow-y-auto max-h-20 sm:max-h-64">
                   <ul className="text-xs sm:text-sm space-y-0.5 sm:space-y-1">
-                    {roster.bench.map((p, i) => (
+                    {chosenRoster.bench.map((p, i) => (
                       <li key={i} className="flex justify-between">
                         <span className="truncate">{p.name}</span>
-                        <span className="text-gray-400">{p.points} pts</span>
+                        <span className="text-gray-400">{toNum(p.points).toFixed(2)} pts</span>
                       </li>
                     ))}
                   </ul>
                 </div>
                 <div className="mt-1 sm:mt-2 text-right text-yellow-400 font-bold text-xs sm:text-sm">
-                  Total: {benchTotal} pts
+                  Total: {benchTotalNum.toFixed(2)} pts
                 </div>
               </div>
             </div>
