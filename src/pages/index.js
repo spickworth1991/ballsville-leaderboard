@@ -1,21 +1,26 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Navbar from '../components/Navbar';
 import Leaderboard from '../components/Leaderboard';
 import useR2Live from '../hooks/useR2Live';
+import { getInitialConfig } from '../initConfig';
 
 export default function Home() {
+  const initial = useMemo(() => getInitialConfig(), []);
   const [leaderboards, setLeaderboards] = useState(null);
+
+  // Seed from URL/preset instead of hardcoding big_game
   const [current, setCurrent] = useState({
-    year: '2025',
-    mode: 'big_game',
-    filterType: 'all',
-    filterValue: null,
+    year: initial.year,           // e.g., "2025" or URL override
+    mode: initial.mode,           // e.g., "mini_game" from ?preset=minigame
+    filterType: initial.filterType,   // "all" | "division" | "league"
+    filterValue: initial.filterValue, // value or null
   });
+
   const [showWeeks, setShowWeeks] = useState(false);
   const [filteredData, setFilteredData] = useState(null);
 
-  // ✅ Live data from R2 (polls weekly_manifest.json with HEAD; fetches leaderboards.json only when ETag changes)
+  // Live data (polls weekly_manifest.json; fetches leaderboards.json on ETag change)
   const { data: liveData } = useR2Live();
 
   // Whenever live data changes, update the source of truth
@@ -34,6 +39,8 @@ export default function Home() {
     if (!modes.length) return;
 
     let nextMode = current.mode;
+
+    // If preset/URL mode doesn't exist in this year's data, fall back sanely
     if (!modes.includes(nextMode)) {
       nextMode =
         (modes.includes('big_game') && 'big_game') ||
@@ -41,9 +48,9 @@ export default function Home() {
         (modes.includes('redraft') && 'redraft') ||
         modes[0];
 
-      // reset filters if mode changes
       if (nextMode !== current.mode) {
         setCurrent(prev => ({ ...prev, mode: nextMode, filterType: 'all', filterValue: null }));
+        return; // let next render recalc with corrected mode
       }
     }
 
@@ -72,6 +79,7 @@ export default function Home() {
         showWeeks={showWeeks}
         setShowWeeks={setShowWeeks}
       />
+
       <div className="max-w-7xl mx-auto p-6">
         <h1 className="text-4xl font-bold text-center mb-6 text-indigo-500">
           {title} {current.filterType !== 'all' ? ` - ${current.filterValue}` : ''}
