@@ -9,34 +9,22 @@ import useAvailableYears from '../hooks/useAvailableYears';
 const BASE_PATH = '/data'; // must match your Cloudflare route to R2
 
 // Compute live weekly + total for an owner row
+// Compute display total for an owner row
 function computeLiveOwner(o) {
-  const weekly = { ...(o.weekly || {}) };
-  const weekNums = Object.keys(weekly).map(n => Number(n)).filter(Number.isFinite);
-  const latestWeek = weekNums.length ? Math.max(...weekNums) : null;
+  const weekly = o.weekly || {};
+  const weeklySum = Object.values(weekly).reduce((a, b) => a + (Number(b) || 0), 0);
+  const seasonTotal = Number(o.total || 0);
 
-  // If latest week is 0 but we have live starters points, use them
-  if (latestWeek != null) {
-    const wkVal = Number(weekly[latestWeek] ?? 0);
-    if (wkVal === 0 && Array.isArray(o.latestRoster?.starters) && o.latestRoster.starters.length) {
-      const live = o.latestRoster.starters.reduce((sum, s) => sum + Number(s?.points || 0), 0);
-      if (live > 0) weekly[latestWeek] = Number(live.toFixed(2));
-    }
-  }
-
-  const weeklySum = Object.values(weekly).reduce((a, b) => a + Number(b || 0), 0);
-  const displayTotal =
-    weeklySum > 0
-      ? weeklySum
-      : Number.isFinite(Number(o.total))
-      ? Number(o.total)
-      : 0;
+  // exactly as requested:
+  // if the total is 0 -> use sum(weekly); else use the provided total
+  const displayTotal = seasonTotal > 0 ? seasonTotal : Number(weeklySum.toFixed(2));
 
   return {
     ...o,
-    weekly,
-    total: Number(displayTotal.toFixed(2)), // overwrite so sorting uses live total
+    total: displayTotal, // overwrite so sorting/rendering uses the chosen total
   };
 }
+
 
 export default function Home() {
   // Discover only current year + 2 back (under /data)
