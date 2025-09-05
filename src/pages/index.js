@@ -3,11 +3,14 @@ import { useEffect, useState } from 'react';
 import Navbar from '../components/Navbar';
 import Leaderboard from '../components/Leaderboard';
 import useR2Live from '../hooks/useR2Live';
+import useAvailableYears from '../hooks/useAvailableYears';
 
 export default function Home() {
+  const { years, error: yearsError } = useAvailableYears({ maxYearsBack: 8 }); // tweak window if needed
+
   const [leaderboards, setLeaderboards] = useState(null);
   const [current, setCurrent] = useState({
-    year: '2025',
+    year: String(new Date().getFullYear()),
     mode: 'big_game',
     filterType: 'all',
     filterValue: null,
@@ -15,18 +18,31 @@ export default function Home() {
   const [showWeeks, setShowWeeks] = useState(false);
   const [filteredData, setFilteredData] = useState(null);
 
-  // ✅ Live data from R2 (polls weekly_manifest.json with HEAD; fetches leaderboards.json only when ETag changes)
-  const { data: liveData } = useR2Live();
-
-  // Whenever live data changes, update the source of truth
+  // When year list arrives, ensure current.year is valid
   useEffect(() => {
-    if (liveData) setLeaderboards(liveData);
+    if (!years || !years.length) return;
+    if (!years.includes(current.year)) {
+      setCurrent(prev => ({
+        ...prev,
+        year: years[0], // newest available
+        mode: 'big_game',
+        filterType: 'all',
+        filterValue: null,
+      }));
+    }
+  }, [years]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Per-year live data from R2
+  const { data: liveData, error: liveError } = useR2Live(current.year);
+
+  // Source of truth
+  useEffect(() => {
+    if (liveData) setLeaderboards(liveData); // { "<year>": {...} }
   }, [liveData]);
 
-  // Normalize mode + apply filters whenever inputs change
+  // Normalize mode + apply filters
   useEffect(() => {
     if (!leaderboards) return;
-
     const yearBlock = leaderboards?.[current.year];
     if (!yearBlock) return;
 
@@ -41,25 +57,29 @@ export default function Home() {
         (modes.includes('redraft') && 'redraft') ||
         modes[0];
 
-      // reset filters if mode changes
       if (nextMode !== current.mode) {
         setCurrent(prev => ({ ...prev, mode: nextMode, filterType: 'all', filterValue: null }));
       }
     }
 
     const fullData = yearBlock[nextMode];
-    let filteredOwners = [...(fullData?.owners || [])];
+    let owners = [...(fullData?.owners || [])];
 
-    if (current.filterType === 'division') {
-      filteredOwners = filteredOwners.filter(o => o.division === current.filterValue);
-    } else if (current.filterType === 'league') {
-      filteredOwners = filteredOwners.filter(o => o.leagueName === current.filterValue);
-    }
+    if (current.filterType === 'division') owners = owners.filter(o => o.division === current.filterValue);
+    else if (current.filterType === 'league') owners = owners.filter(o => o.leagueName === current.filterValue);
 
-    setFilteredData({ ...fullData, owners: filteredOwners });
+    setFilteredData({ ...fullData, owners });
   }, [leaderboards, current.year, current.mode, current.filterType, current.filterValue]);
 
-  if (!leaderboards) return <p className="text-center mt-8">Loading...</p>;
+  // Loading / error states
+  if (!years) return <p className="text-center mt-8">Loading years…</p>;
+  if (!years.length) return <p className="text-center mt-8">No leaderboard years found.</p>;
+  if (yearsError) return <p className="text-center mt-8">Error discovering years: {String(yearsError)}</p>;
+  if (liveError) return <p className="text-center mt-8">Error loading {current.year}: {String(liveError)}</p>;
+  if (!leaderboards) return <p className="text-center mt-8">Loading {current.year}…</p>;
+
+  const yearBlock = leaderboards?.[current.year];
+  if (!yearBlock) return <p className="text-center mt-8">No data for {current.year}.</p>;
 
   const title = filteredData?.name || `${current.year}`;
 
@@ -67,6 +87,7 @@ export default function Home() {
     <div>
       <Navbar
         data={leaderboards}
+        years={years}                
         current={current}
         setCurrent={setCurrent}
         showWeeks={showWeeks}

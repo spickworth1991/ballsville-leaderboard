@@ -1,21 +1,19 @@
+// components/Navbar.jsx
 'use client';
 import { useMemo, useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom'; 
 
-export default function Navbar({ data, current, setCurrent, showWeeks, setShowWeeks }) {
-  const [openSheet, setOpenSheet] = useState(null); // 'divisions' | 'leagues' | null
+export default function Navbar({ data, years: yearsProp, current, setCurrent, showWeeks, setShowWeeks }) {
+  const [openSheet, setOpenSheet] = useState(null);
   const [search, setSearch] = useState('');
 
   if (!data) return null;
 
-  const years = useMemo(() => Object.keys(data).sort((a, b) => b.localeCompare(a)), [data]);
-
-  // Build modes dynamically for selected year
-  const availableModes = useMemo(() => {
-    const yearBlock = data?.[current.year] || {};
-    const order = { big_game: 1, mini_game: 2, redraft_2025: 3, redraft: 3, triathlon: 4, dynasty: 5 };
-    return Object.keys(yearBlock).sort((a, b) => (order[a] ?? 99) - (order[b] ?? 99) || a.localeCompare(b));
-  }, [data, current.year]);
+  // 👇 Prefer the explicit list from props; otherwise fall back to whatever is in data
+  const years = useMemo(() => {
+    const base = (yearsProp?.length ? yearsProp : Object.keys(data || {}));
+    return [...base].sort((a, b) => b.localeCompare(a));
+  }, [yearsProp, data]);
 
   // Keep mode valid
   const activeMode = useMemo(() => {
