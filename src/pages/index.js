@@ -7,6 +7,22 @@ import useR2Live from '../hooks/useR2Live';
 import useAvailableYears from '../hooks/useAvailableYears';
 
 const BASE_PATH = '/data'; // must match your Cloudflare route to R2
+const CURRENT_YEAR = String(new Date().getFullYear());
+
+function formatET(iso) {
+  try {
+    return new Date(iso).toLocaleString("en-US", {
+      timeZone: "America/Detroit",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+  } catch {
+    return iso;
+  }
+}
 
 // Compute live weekly + total for an owner row
 function computeLiveOwner(o) {
@@ -163,6 +179,11 @@ export default function Home() {
   }
 
   const title = filteredData?.name || `${current.year}`;
+  const activeModeBlock = yearBlock?.[current.mode];
+  const updatedAt =
+    current.year === CURRENT_YEAR && activeModeBlock?.updatedAt
+      ? formatET(activeModeBlock.updatedAt)
+      : null;
 
   return (
     <div>
@@ -175,9 +196,18 @@ export default function Home() {
         setShowWeeks={setShowWeeks}
       />
       <div className="max-w-7xl mx-auto p-6">
-        <h1 className="text-4xl font-bold text-center mb-6 text-indigo-500">
-          {title} {current.filterType !== 'all' ? ` - ${current.filterValue}` : ''}
-        </h1>
+        <div className="mb-6 flex items-center justify-center gap-3">
+          <h1 className="text-4xl font-bold text-indigo-500 text-center">
+            {title} {current.filterType !== 'all' ? ` - ${current.filterValue}` : ''}
+          </h1>
+
+          {updatedAt && (
+            <span className="text-sm text-white/60">
+              • Updated {updatedAt} ET
+            </span>
+          )}
+        </div>
+
 
         {filteredData && (
           <Leaderboard
