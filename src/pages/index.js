@@ -9,19 +9,16 @@ import useAvailableYears from '../hooks/useAvailableYears';
 const BASE_PATH = '/data'; // must match your Cloudflare route to R2
 
 // Compute live weekly + total for an owner row
-// Compute display total for an owner row
 function computeLiveOwner(o) {
-  const weekly = o.weekly || {};
-  const weeklySum = Object.values(weekly).reduce((a, b) => a + (Number(b) || 0), 0);
-  const seasonTotal = Number(o.total || 0);
-
-  // exactly as requested:
-  // if the total is 0 -> use sum(weekly); else use the provided total
-  const displayTotal = seasonTotal > 0 ? seasonTotal : Number(weeklySum.toFixed(2));
+  const weekly = { ...(o.weekly || {}) };
+  const weeklySum = Object.values(weekly).reduce((a, b) => a + Number(b || 0), 0);
+  const givenTotal = Number(o.total || 0);
+  const displayTotal = givenTotal > 0 ? givenTotal : weeklySum;
 
   return {
     ...o,
-    total: displayTotal, // overwrite so sorting/rendering uses the chosen total
+    weekly,
+    total: Number(displayTotal.toFixed(2)),
   };
 }
 

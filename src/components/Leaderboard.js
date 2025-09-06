@@ -48,47 +48,49 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
   const startIndex = (page - 1) * itemsPerPage;
   const currentOwners = filteredOwners.slice(startIndex, startIndex + itemsPerPage);
 
-  // -------- Weekly data (unchanged) ----------
-  const [selectedOwner, setSelectedOwner] = useState(null);
-  const [selectedRoster, setSelectedRoster] = useState(null);
-  const [weeklyData, setWeeklyData] = useState(null);
-  const [visibleWeeksStart, setVisibleWeeksStart] = useState(0);
+  // -------- Weekly data (per-year) ----------
+const [selectedOwner, setSelectedOwner] = useState(null);
+const [selectedRoster, setSelectedRoster] = useState(null);
+const [weeklyData, setWeeklyData] = useState(null);
+const [visibleWeeksStart, setVisibleWeeksStart] = useState(0);
+const weeklyCache = useRef({}); // cache per year
 
-  const weeksToShow = 3;
-  const maxWeeks = data.weeks.length;
+useEffect(() => {
+  const loadWeeklyData = async () => {
+    if (weeklyCache.current[year]) {
+      setWeeklyData(weeklyCache.current[year]);
+      return;
+    }
+    try {
+      // Read the manifest for this year
+      const manRes = await fetch(`/data/weekly_manifest_${year}.json`, { cache: 'no-store' });
+      if (!manRes.ok) { setWeeklyData(null); return; }
+      const manifest = await manRes.json(); // { parts: ["weekly_rosters_2025_part1.json", ...] }
 
-  const weeklyCache = useRef(null);
-
-  useEffect(() => {
-    const loadWeeklyData = async () => {
-      if (weeklyCache.current) {
-        setWeeklyData(weeklyCache.current);
-        return;
-      }
-      let combinedData = {};
-      for (let i = 1; i <= 20; i++) {
-        const partUrl = `/data/weekly_rosters_part${i}.json`;
-        try {
-          const res = await fetch(partUrl);
-          if (res.status === 404) break;
-          if (!res.ok) break;
-          const partData = await res.json();
-          for (const y in partData) {
-            if (!combinedData[y]) combinedData[y] = {};
-            for (const c in partData[y]) {
-              if (!combinedData[y][c]) combinedData[y][c] = {};
-              Object.assign(combinedData[y][c], partData[y][c]);
-            }
+      let combined = {};
+      for (const part of manifest.parts || []) {
+        const url = `/data/${part}`;
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) continue;
+        const chunk = await res.json();
+        // Merge { [year]: { [mode]: { [leagueName]: { [week]: [ {ownerName, starters, bench}, ... ] } } } }
+        for (const y in chunk) {
+          combined[y] = combined[y] || {};
+          for (const mode in chunk[y]) {
+            combined[y][mode] = combined[y][mode] || {};
+            Object.assign(combined[y][mode], chunk[y][mode]);
           }
-        } catch {
-          break;
         }
       }
-      weeklyCache.current = combinedData;
-      setWeeklyData(combinedData);
-    };
-    loadWeeklyData();
-  }, []);
+      weeklyCache.current[year] = combined;
+      setWeeklyData(combined);
+    } catch {
+      setWeeklyData(null);
+    }
+  };
+  loadWeeklyData();
+}, [year]);
+
 
   const handleWeeklyClick = (owner, week) => {
     if (!showWeeks || !weeklyData) return;
