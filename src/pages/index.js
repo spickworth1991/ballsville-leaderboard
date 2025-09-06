@@ -196,19 +196,17 @@ export default function Home() {
         setShowWeeks={setShowWeeks}
       />
       <div className="max-w-7xl mx-auto p-6">
-        <div className="mb-6 flex items-center justify-center gap-3">
-          <h1 className="text-4xl font-bold text-indigo-500 text-center">
+        <div className="mb-6 text-center">
+          <h1 className="text-4xl font-bold text-indigo-500">
             {title} {current.filterType !== 'all' ? ` - ${current.filterValue}` : ''}
           </h1>
 
           {updatedAt && (
-            <span className="text-sm text-white/60">
-              • Updated {updatedAt} ET
-            </span>
+            <div className="text-sm text-white/60 mt-1">
+              Updated {updatedAt} ET
+            </div>
           )}
         </div>
-
-
         {filteredData && (
           <Leaderboard
             data={filteredData}
