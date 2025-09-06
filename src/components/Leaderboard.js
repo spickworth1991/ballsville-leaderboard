@@ -3,6 +3,8 @@ import { useRef, useState, useEffect, useMemo } from "react";
 import { useLeaderboard } from "../context/LeaderboardContext";
 import OwnerModal from "./OwnerModal";
 
+const WEEKS_WINDOW = 3; // how many weeks to show at once
+
 export default function Leaderboard({ data, year, category, showWeeks, setShowWeeks }) {
   const { statsByYear } = useLeaderboard();
   const { totalTeams = 0, uniqueOwners = 0 } = statsByYear?.[year] || {};
@@ -28,7 +30,6 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
   const ownerSuggestions = useMemo(() => {
     if (!q) return [];
     const names = Array.from(new Set(sortedOwners.map((o) => o.ownerName)));
-    // Slightly “premium” scoring: startsWith first, then includes
     const starts = names.filter((n) => norm(n).startsWith(q));
     const includes = names.filter((n) => !norm(n).startsWith(q) && norm(n).includes(q));
     return [...starts, ...includes].slice(0, 8);
@@ -49,48 +50,62 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
   const currentOwners = filteredOwners.slice(startIndex, startIndex + itemsPerPage);
 
   // -------- Weekly data (per-year) ----------
-const [selectedOwner, setSelectedOwner] = useState(null);
-const [selectedRoster, setSelectedRoster] = useState(null);
-const [weeklyData, setWeeklyData] = useState(null);
-const [visibleWeeksStart, setVisibleWeeksStart] = useState(0);
-const weeklyCache = useRef({}); // cache per year
+  const [selectedOwner, setSelectedOwner] = useState(null);
+  const [selectedRoster, setSelectedRoster] = useState(null);
+  const [weeklyData, setWeeklyData] = useState(null);
+  const [visibleWeeksStart, setVisibleWeeksStart] = useState(0);
+  const weeklyCache = useRef({}); // cache per year
 
-useEffect(() => {
-  const loadWeeklyData = async () => {
-    if (weeklyCache.current[year]) {
-      setWeeklyData(weeklyCache.current[year]);
+  // Reset weeks pager when year/mode/toggle changes
+  useEffect(() => {
+    setVisibleWeeksStart(0);
+  }, [year, category, showWeeks]);
+
+  useEffect(() => {
+    // Only try to load weekly data when the Weeks view is actually ON
+    if (!showWeeks) {
+      setWeeklyData(null);
       return;
     }
-    try {
-      // Read the manifest for this year
-      const manRes = await fetch(`/data/weekly_manifest_${year}.json`, { cache: 'no-store' });
-      if (!manRes.ok) { setWeeklyData(null); return; }
-      const manifest = await manRes.json(); // { parts: ["weekly_rosters_2025_part1.json", ...] }
 
-      let combined = {};
-      for (const part of manifest.parts || []) {
-        const url = `/data/${part}`;
-        const res = await fetch(url, { cache: 'no-store' });
-        if (!res.ok) continue;
-        const chunk = await res.json();
-        // Merge { [year]: { [mode]: { [leagueName]: { [week]: [ {ownerName, starters, bench}, ... ] } } } }
-        for (const y in chunk) {
-          combined[y] = combined[y] || {};
-          for (const mode in chunk[y]) {
-            combined[y][mode] = combined[y][mode] || {};
-            Object.assign(combined[y][mode], chunk[y][mode]);
+    const loadWeeklyData = async () => {
+      if (weeklyCache.current[year]) {
+        setWeeklyData(weeklyCache.current[year]);
+        return;
+      }
+      try {
+        const manRes = await fetch(`/data/weekly_manifest_${year}.json`, { cache: "no-store" });
+        if (!manRes.ok) {
+          // No weekly parts for this year — just disable weekly data
+          setWeeklyData(null);
+          return;
+        }
+        const manifest = await manRes.json(); // { parts: ["weekly_rosters_YYYY_part1.json", ...] }
+
+        let combined = {};
+        for (const part of manifest.parts || []) {
+          const url = `/data/${part}`;
+          const res = await fetch(url, { cache: "no-store" });
+          if (!res.ok) continue;
+          const chunk = await res.json();
+          // Merge { [year]: { [mode]: { [leagueName]: { [week]: [ {ownerName, starters, bench}, ... ] } } } }
+          for (const y in chunk) {
+            combined[y] = combined[y] || {};
+            for (const mode in chunk[y]) {
+              combined[y][mode] = combined[y][mode] || {};
+              Object.assign(combined[y][mode], chunk[y][mode]);
+            }
           }
         }
+        weeklyCache.current[year] = combined;
+        setWeeklyData(combined);
+      } catch {
+        setWeeklyData(null);
       }
-      weeklyCache.current[year] = combined;
-      setWeeklyData(combined);
-    } catch {
-      setWeeklyData(null);
-    }
-  };
-  loadWeeklyData();
-}, [year]);
+    };
 
+    loadWeeklyData();
+  }, [year, showWeeks]);
 
   const handleWeeklyClick = (owner, week) => {
     if (!showWeeks || !weeklyData) return;
@@ -103,19 +118,24 @@ useEffect(() => {
     }
   };
 
-  const currentWeeks = showWeeks ? data.weeks.slice(visibleWeeksStart, visibleWeeksStart + weeksToShow) : [];
+  const maxWeeks = Array.isArray(data.weeks) ? data.weeks.length : 0;
+  const currentWeeks =
+    showWeeks && maxWeeks
+      ? data.weeks.slice(visibleWeeksStart, Math.min(visibleWeeksStart + WEEKS_WINDOW, maxWeeks))
+      : [];
+
   const uniqueLeagues = new Set(sortedOwners.map((o) => o.leagueName));
   const showLeagueColumn = uniqueLeagues.size > 1;
 
   const nextWeeks = () => {
-    if (visibleWeeksStart + weeksToShow < maxWeeks) {
-      setVisibleWeeksStart(visibleWeeksStart + weeksToShow);
+    if (visibleWeeksStart + WEEKS_WINDOW < maxWeeks) {
+      setVisibleWeeksStart(visibleWeeksStart + WEEKS_WINDOW);
     }
   };
 
   const prevWeeks = () => {
-    if (visibleWeeksStart - weeksToShow >= 0) {
-      setVisibleWeeksStart(visibleWeeksStart - weeksToShow);
+    if (visibleWeeksStart - WEEKS_WINDOW >= 0) {
+      setVisibleWeeksStart(visibleWeeksStart - WEEKS_WINDOW);
     }
   };
 
@@ -150,7 +170,7 @@ useEffect(() => {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onFocus={() => setFocusSuggest(true)}
-              onBlur={() => setTimeout(() => setFocusSuggest(false), 120)} // slight delay so clicks register
+              onBlur={() => setTimeout(() => setFocusSuggest(false), 120)}
               placeholder="Search owners…"
               className="flex-1 bg-transparent outline-none text-sm text-white placeholder-white/40"
             />
@@ -175,7 +195,7 @@ useEffect(() => {
                     className="w-full text-left px-4 py-2 text-sm text-white hover:bg-white/5"
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => {
-                      setQuery(name);   // filter directly to this owner
+                      setQuery(name);
                       setFocusSuggest(false);
                     }}
                   >
@@ -187,16 +207,15 @@ useEffect(() => {
           )}
 
           {/* Stats + result count line */}
-           <div className="mt-1 text-xs text-white/50">
-            Total teams drafted {year}: <span className="text-white">{totalTeams}</span> •
-            {' '}Unique owners in {year}: <span className="text-white">{uniqueOwners}</span>
-          </div> 
-
+          <div className="mt-1 text-xs text-white/50">
+            Total teams drafted {year}: <span className="text-white">{totalTeams}</span> •{" "}
+            Unique owners in {year}: <span className="text-white">{uniqueOwners}</span>
+          </div>
         </div>
       </div>
 
-      {/* Weeks pager (unchanged) */}
-      {showWeeks && (
+      {/* Weeks pager */}
+      {showWeeks && maxWeeks > 0 && (
         <div className="flex justify-center items-center gap-3 mb-4">
           <button
             onClick={prevWeeks}
@@ -206,11 +225,11 @@ useEffect(() => {
             ◀ Prev
           </button>
           <span className="text-white">
-            Showing weeks {visibleWeeksStart + 1}-{Math.min(visibleWeeksStart + weeksToShow, maxWeeks)}
+            Showing weeks {visibleWeeksStart + 1}-{Math.min(visibleWeeksStart + WEEKS_WINDOW, maxWeeks)}
           </span>
           <button
             onClick={nextWeeks}
-            disabled={visibleWeeksStart + weeksToShow >= maxWeeks}
+            disabled={visibleWeeksStart + WEEKS_WINDOW >= maxWeeks}
             className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded disabled:opacity-50"
           >
             Next ▶
@@ -285,20 +304,19 @@ useEffect(() => {
       )}
 
       {/* Modal */}
-        {selectedOwner && (
-          <OwnerModal
-            owner={selectedOwner}
-            selectedRoster={selectedRoster}
-            onClose={() => {
-              setSelectedOwner(null);
-              setSelectedRoster(null);
-            }}
-            allOwners={data.owners}
-            year={year}            // 👈 from your Leaderboard props
-            mode={category}        // 👈 from your Leaderboard props (e.g. 'big_game')
-            basePath="/data"       // 👈 or your Cloudflare route to R2 files
-          />
-
+      {selectedOwner && (
+        <OwnerModal
+          owner={selectedOwner}
+          selectedRoster={selectedRoster}
+          onClose={() => {
+            setSelectedOwner(null);
+            setSelectedRoster(null);
+          }}
+          allOwners={data.owners}
+          year={year}
+          mode={category}
+          basePath="/data"
+        />
       )}
     </div>
   );
