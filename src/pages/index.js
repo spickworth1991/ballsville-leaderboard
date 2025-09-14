@@ -5,6 +5,7 @@ import Navbar from '../components/Navbar';
 import Leaderboard from '../components/Leaderboard';
 import useR2Live from '../hooks/useR2Live';
 import useAvailableYears from '../hooks/useAvailableYears';
+import { LeaderboardProvider } from '../context/LeaderboardContext';
 
 const BASE_PATH = '/data'; // must match your Cloudflare route to R2
 const CURRENT_YEAR = String(new Date().getFullYear());
@@ -186,9 +187,10 @@ export default function Home() {
       : null;
 
   return (
-    <div>
+  <div>
+    <LeaderboardProvider leaderboards={leaderboards} perModeMinSizes={/* optional */ undefined}>
       <Navbar
-        data={leaderboards}  // multi-year cache (instant switching)
+        data={leaderboards}
         years={years}
         current={current}
         setCurrent={setCurrent}
@@ -200,13 +202,11 @@ export default function Home() {
           <h1 className="text-4xl font-bold text-indigo-500">
             {title} {current.filterType !== 'all' ? ` - ${current.filterValue}` : ''}
           </h1>
-
           {updatedAt && (
-            <div className="text-sm text-white/60 mt-1">
-              Updated {updatedAt} ET
-            </div>
+            <div className="text-sm text-white/60 mt-1">Updated {updatedAt} ET</div>
           )}
         </div>
+
         {filteredData && (
           <Leaderboard
             data={filteredData}
@@ -217,6 +217,7 @@ export default function Home() {
           />
         )}
       </div>
-    </div>
-  );
+    </LeaderboardProvider>
+  </div>
+);
 }
