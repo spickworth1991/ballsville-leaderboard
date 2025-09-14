@@ -24,6 +24,7 @@
   "devDependencies": {
     "@cloudflare/next-on-pages": "^1.13.13",
     "@types/react": "19.1.9",
+    "prompts": "^2.4.2",
     "wrangler": "^4.28.1"
   }
 }

@@ -1,40 +1,43 @@
 // /context/LeaderboardContext.jsx
 'use client';
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { computeYearStats } from '../utils/computeYearStats'; // adjust path if needed
+import { createContext, useContext, useMemo } from 'react';
 
-export const LeaderboardContext = createContext();
+// Simple year stats: total teams (all rows) + unique owners (by name) per year
+function computeYearStats(leaderboards, perModeMinSizes) {
+  const out = {};
+  for (const [year, yearBlock] of Object.entries(leaderboards || {})) {
+    let totalTeams = 0;
+    const ownerNames = new Set();
 
-export const LeaderboardProvider = ({ children, perModeMinSizes }) => {
-  const [leaderboards, setLeaderboards] = useState(null);
-  const [current, setCurrent] = useState({
-    year: '2025',
-    mode: 'big_game',
-    filterType: 'all',
-    filterValue: null,
-  });
+    for (const [mode, block] of Object.entries(yearBlock || {})) {
+      // optional: skip modes that don't meet a minimum size (if you pass it)
+      const min = perModeMinSizes?.[mode];
+      const owners = Array.isArray(block?.owners) ? block.owners : [];
+      if (min && owners.length < min) continue;
 
-  useEffect(() => {
-    (async () => {
-      const res = await fetch('/data/leaderboards.json');
-      const json = await res.json();
-      setLeaderboards(json);
-    })();
-  }, []);
+      totalTeams += owners.length;
+      owners.forEach(o => ownerNames.add(o.ownerName));
+    }
 
-  // Compute stats per YEAR (independent of mode), honoring “full league” thresholds per mode
+    out[year] = { totalTeams, uniqueOwners: ownerNames.size };
+  }
+  return out;
+}
+
+export const LeaderboardContext = createContext({ statsByYear: {} });
+
+export const LeaderboardProvider = ({ children, leaderboards, perModeMinSizes }) => {
   const statsByYear = useMemo(() => {
-    if (!leaderboards) return {};
+    if (!leaderboards || typeof leaderboards !== 'object') return {};
     return computeYearStats(leaderboards, perModeMinSizes);
   }, [leaderboards, perModeMinSizes]);
 
-  const value = useMemo(
-    () => ({ leaderboards, current, setCurrent, statsByYear }),
-    [leaderboards, current, statsByYear]
+  const value = useMemo(() => ({ statsByYear }), [statsByYear]);
+  return (
+    <LeaderboardContext.Provider value={value}>
+      {children}
+    </LeaderboardContext.Provider>
   );
-
-  return <LeaderboardContext.Provider value={value}>{children}</LeaderboardContext.Provider>;
 };
 
-// 🔹 This is the hook you import and call in components:
 export const useLeaderboard = () => useContext(LeaderboardContext);

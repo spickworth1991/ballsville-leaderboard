@@ -1,56 +1,82 @@
-// src/hooks/useR2Live.js
-import { useEffect, useRef, useState } from "react";
+'use client';
+
+import { useEffect, useRef, useState } from 'react';
 
 /**
- * Polls a small manifest with HEAD to detect changes (via ETag),
- * then fetches the big leaderboard JSON only when needed.
+ * useR2Live (per-year)
+ * - Polls weekly_manifest_<year>.json (HEAD → fallback GET)
+ * - On change, fetches leaderboards_<year>.json
+ * - Returns data shaped like { "<year>": { ... } }
+ *
+ * NOTE: basePath defaults to '/data' so URLs look like:
+ *   /data/weekly_manifest_2025.json
+ *   /data/leaderboards_2025.json
+ * which is what your Cloudflare route likely maps to R2.
  */
-export default function useR2Live({
-  manifestUrl = "/data/weekly_manifest.json",
-  dataUrl = "/data/leaderboards.json",
-  pollMs = 480000, // 30s
-} = {}) {
+export default function useR2Live(
+  year,
+  { pollMs = 60000, basePath = '/data' } = {}
+) {
   const [data, setData] = useState(null);
-  const [lastChecked, setLastChecked] = useState(null);
+  const [error, setError] = useState(null);
   const etagRef = useRef(null);
-  const ctrlRef = useRef(null);
+  const activeYearRef = useRef(year);
+
+  useEffect(() => { activeYearRef.current = year; }, [year]);
 
   useEffect(() => {
-    let timer;
+    let timer, aborted = false;
 
-    const check = async () => {
+    const yManifest = (y) => `${basePath.replace(/\/$/, '')}/weekly_manifest_${y}.json`;
+    const yBoards   = (y) => `${basePath.replace(/\/$/, '')}/leaderboards_${y}.json`;
+
+    const headOrGet = async (url) => {
       try {
-        setLastChecked(Date.now());
+        const h = await fetch(url, { method: 'HEAD', cache: 'no-store' });
+        if (h.ok) return h;
+      } catch {}
+      const g = await fetch(url, { method: 'GET', cache: 'no-store' });
+      if (!g.ok) throw new Error(`FETCH ${url} → ${g.status}`);
+      return g;
+    };
 
-        // HEAD the tiny manifest (fast; no body)
-        const head = await fetch(manifestUrl, { method: "HEAD", cache: "no-store" });
-        const newTag = head.headers.get("etag") || "";
+    const getJson = async (url) => {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`GET ${url} → ${res.status}`);
+      return res.json();
+    };
 
-        // first load OR changed ETag => fetch big JSON
-        if (!etagRef.current || newTag !== etagRef.current) {
-          etagRef.current = newTag;
-          ctrlRef.current?.abort();
-          const res = await fetch(`${dataUrl}?t=${Date.now()}`, {
-            cache: "no-store",
-            signal: (ctrlRef.current = new AbortController()).signal,
-          });
-          const json = await res.json();
-          setData(json);
-        }
+    const tick = async () => {
+      if (aborted) return;
+      const y = activeYearRef.current;
+
+      try {
+        const meta = await headOrGet(yManifest(y));
+        const tag =
+          meta.headers.get('etag') ||
+          meta.headers.get('last-modified') ||
+          meta.headers.get('content-length') ||
+          etagRef.current || 'init';
+
+        if (etagRef.current === tag && data !== null) return;
+
+        const yearObj = await getJson(yBoards(y));
+        const shaped = yearObj && yearObj[y] ? yearObj : { [y]: yearObj[y] || yearObj };
+
+        if (aborted) return;
+        etagRef.current = tag;
+        setData(shaped);
+        setError(null);
       } catch (e) {
-        console.error("live poll error:", e);
+        if (aborted) return;
+        setError(String(e));
       }
     };
 
-    // prime & poll
-    check();
-    timer = setInterval(check, pollMs);
+    tick();
+    timer = setInterval(tick, pollMs);
+    return () => { aborted = true; clearInterval(timer); };
+  }, [pollMs, basePath]);
 
-    return () => {
-      clearInterval(timer);
-      ctrlRef.current?.abort();
-    };
-  }, [manifestUrl, dataUrl, pollMs]);
-
-  return { data, lastChecked };
+  return { data, error, etag: etagRef.current };
 }
