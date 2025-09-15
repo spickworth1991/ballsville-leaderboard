@@ -9,10 +9,15 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
   const { statsByYear } = useLeaderboard();
   const { totalTeams = 0, uniqueOwners = 0 } = statsByYear?.[year] || {};
 
-  const sortedOwners = useMemo(
-    () => [...data.owners].sort((a, b) => b.total - a.total),
-    [data.owners]
-  );
+  // Build a globally-ranked list (stable tie-breakers)
+  const rankedOwners = useMemo(() => {
+    const list = [...data.owners].sort((a, b) =>
+      (b.total - a.total) ||
+      a.ownerName.localeCompare(b.ownerName) ||
+      a.leagueName.localeCompare(b.leagueName)
+    );
+    return list.map((o, i) => ({ ...o, globalRank: i + 1 }));
+  }, [data.owners]);
 
   // -------- Owner Search ----------
   const [query, setQuery] = useState("");
@@ -22,18 +27,18 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
   const norm = (s) => String(s || "").toLowerCase().trim();
   const q = norm(query);
 
-  const filteredOwners = useMemo(() => {
-    if (!q) return sortedOwners;
-    return sortedOwners.filter((o) => norm(o.ownerName).includes(q));
-  }, [q, sortedOwners]);
+   const filteredOwners = useMemo(() => {
+    if (!q) return rankedOwners;
+    return rankedOwners.filter((o) => norm(o.ownerName).includes(q));
+  }, [q, rankedOwners]);
 
   const ownerSuggestions = useMemo(() => {
     if (!q) return [];
-    const names = Array.from(new Set(sortedOwners.map((o) => o.ownerName)));
+    const names = Array.from(new Set(rankedOwners.map((o) => o.ownerName)));
     const starts = names.filter((n) => norm(n).startsWith(q));
     const includes = names.filter((n) => !norm(n).startsWith(q) && norm(n).includes(q));
     return [...starts, ...includes].slice(0, 8);
-  }, [q, sortedOwners]);
+  }, [q, rankedOwners]);
 
   const clearQuery = () => setQuery("");
 
@@ -124,7 +129,7 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
       ? data.weeks.slice(visibleWeeksStart, Math.min(visibleWeeksStart + WEEKS_WINDOW, maxWeeks))
       : [];
 
-  const uniqueLeagues = new Set(sortedOwners.map((o) => o.leagueName));
+  const uniqueLeagues = new Set(rankedOwners.map((o) => o.leagueName));
   const showLeagueColumn = uniqueLeagues.size > 1;
 
   const nextWeeks = () => {
@@ -259,7 +264,7 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
               className="border-b border-gray-700 hover:bg-gray-900"
               onClick={() => !showWeeks && setSelectedOwner(o)}
             >
-              <td className="p-2">{startIndex + idx + 1}</td>
+              <td className="p-2">{o.globalRank}</td>
               <td className="p-2">{o.ownerName}</td>
               <td>{o.draftSlot ? `(${o.draftSlot})` : "-"}</td>
               {showLeagueColumn && <td className="p-2">{o.leagueName}</td>}
