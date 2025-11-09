@@ -32,7 +32,7 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
   const [weeklySortDir, setWeeklySortDir] = useState("desc"); // "asc" | "desc"
   const [weeklyHighsOnly, setWeeklyHighsOnly] = useState(false);
 
-  // Suggestions
+  // Suggestions / filtered list
   const filteredOwners = useMemo(() => {
     let base = !q ? rankedOwners : rankedOwners.filter((o) => norm(o.ownerName).includes(q));
 
@@ -81,61 +81,65 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
   const [visibleWeeksStart, setVisibleWeeksStart] = useState(0);
   const weeklyCache = useRef({}); // cache per year
 
-  // Reset weeks pager when year/mode/toggle changes
+  // Reset weeks pager & weekly sort when year/mode/toggle changes
   useEffect(() => {
     setVisibleWeeksStart(0);
   }, [year, category, showWeeks]);
-
   useEffect(() => { setWeeklySortWeek(null); setWeeklyHighsOnly(false); }, [year, category, showWeeks]);
 
-  useEffect(() => {
-    // Only try to load weekly data when the Weeks view is actually ON
-    if (!showWeeks) {
-      setWeeklyData(null);
-      return;
+  // Helper: load weekly data (used both by Weekly view and by row click when Weekly is off)
+  const loadWeeklyDataForYear = async () => {
+    if (weeklyCache.current[year]) {
+      setWeeklyData(weeklyCache.current[year]);
+      return weeklyCache.current[year];
     }
-
-    const loadWeeklyData = async () => {
-      if (weeklyCache.current[year]) {
-        setWeeklyData(weeklyCache.current[year]);
-        return;
+    try {
+      const manRes = await fetch(`/data/weekly_manifest_${year}.json`, { cache: "no-store" });
+      if (!manRes.ok) {
+        return null;
       }
-      try {
-        const manRes = await fetch(`/data/weekly_manifest_${year}.json`, { cache: "no-store" });
-        if (!manRes.ok) {
-          // No weekly parts for this year — just disable weekly data
-          setWeeklyData(null);
-          return;
-        }
-        const manifest = await manRes.json(); // { parts: ["weekly_rosters_YYYY_part1.json", ...] }
-
-        let combined = {};
-        for (const part of (manifest.parts || [])) {
-          const url = `/data/${part}`;
-          const res = await fetch(url, { cache: "no-store" });
-          if (!res.ok) continue;
-          const chunk = await res.json();
-          // Merge { [year]: { [mode]: { [leagueName]: { [week]: [ {ownerName, starters, bench}, ... ] } } } }
-          for (const y in chunk) {
-            combined[y] = combined[y] || {};
-            for (const mode in chunk[y]) {
-              combined[y][mode] = combined[y][mode] || {};
-              Object.assign(combined[y][mode], chunk[y][mode]);
-            }
+      const manifest = await manRes.json(); // { parts: ["weekly_rosters_YYYY_part1.json", ...] }
+      let combined = {};
+      for (const part of (manifest.parts || [])) {
+        const url = `/data/${part}`;
+        const res = await fetch(url, { cache: "no-store" });
+        if (!res.ok) continue;
+        const chunk = await res.json();
+        // Merge { [year]: { [mode]: { [leagueName]: { [week]: [ {ownerName, starters, bench}, ... ] } } } }
+        for (const y in chunk) {
+          combined[y] = combined[y] || {};
+          for (const mode in chunk[y]) {
+            combined[y][mode] = combined[y][mode] || {};
+            Object.assign(combined[y][mode], chunk[y][mode]);
           }
         }
-        weeklyCache.current[year] = combined;
-        setWeeklyData(combined);
-      } catch {
-        setWeeklyData(null);
       }
-    };
+      weeklyCache.current[year] = combined;
+      setWeeklyData(combined);
+      return combined;
+    } catch {
+      return null;
+    }
+  };
 
-    loadWeeklyData();
+  // Only auto-load when Weekly is ON; otherwise we lazy-load on click
+  useEffect(() => {
+    let ignore = false;
+    const go = async () => {
+      if (!showWeeks) {
+        // If we already have cache for this year, reflect it; otherwise skip loading now.
+        if (weeklyCache.current[year] && !ignore) setWeeklyData(weeklyCache.current[year]);
+        return;
+      }
+      const data = await loadWeeklyDataForYear();
+      if (!ignore && data) setWeeklyData(data);
+    };
+    go();
+    return () => { ignore = true; };
   }, [showWeeks, year, category]);
 
   const handleWeeklyClick = (owner, week) => {
-    if (!showWeeks || !weeklyData) return;
+    if (!weeklyData) return;
     const leagueData = weeklyData[year]?.[category]?.[owner.leagueName]?.[week];
     if (!leagueData) return;
     const match = leagueData.find((r) => r.ownerName === owner.ownerName);
@@ -143,6 +147,35 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
       setSelectedOwner(owner);
       setSelectedRoster({ week, starters: match.starters, bench: match.bench });
     }
+  };
+
+  // NEW: open modal for latest week when Weekly is OFF
+  const handleRowClickLatest = async (owner) => {
+    // Ensure weekly data is available (lazy load if needed)
+    let wd = weeklyData;
+    if (!wd) {
+      wd = await loadWeeklyDataForYear();
+      if (!wd) return; // nothing to show
+    }
+    const leagueWeeks = wd[year]?.[category]?.[owner.leagueName] || {};
+    const weekNumbers = Object.keys(leagueWeeks).map((k) => Number(k)).filter(Number.isFinite);
+    if (weekNumbers.length === 0) return;
+
+    // Prefer the latest week that actually contains this owner
+    weekNumbers.sort((a, b) => b - a);
+    let chosen = null;
+    for (const wk of weekNumbers) {
+      const arr = leagueWeeks[wk] || [];
+      const hit = arr.find((r) => r.ownerName === owner.ownerName);
+      if (hit) {
+        chosen = { week: wk, starters: hit.starters, bench: hit.bench };
+        break;
+      }
+    }
+    if (!chosen) return;
+
+    setSelectedOwner(owner);
+    setSelectedRoster(chosen);
   };
 
   const maxWeeks = Array.isArray(data.weeks) ? data.weeks.length : 0;
@@ -207,7 +240,7 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
           />
           {!!q && (
             <button
-              onMouseDown={(e) => e.preventDefault()}
+              onMouseDown={(e) => e.preventDefault() }
               onClick={clearQuery}
               className="absolute right-2 top-1/2 -translate-y-1/2 text-white/60 hover:text-white"
             >
@@ -241,7 +274,6 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
         </div>
       </div>
 
-
       {/* Weeks pager */}
       {showWeeks && currentWeeks.length > 0 && (
         <div className="flex items-center justify-between mb-2 text-sm">
@@ -254,18 +286,6 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
           </button>
           <span className="text-white">
             Showing weeks {visibleWeeksStart + 1}-{Math.min(visibleWeeksStart + WEEKS_WINDOW, maxWeeks)}
-            <div className="flex items-center gap-3 mb-2 text-sm">
-          <button
-            type="button"
-            className="px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50"
-            onClick={() => { setWeeklySortWeek(null); setWeeklyHighsOnly(false); }}
-            disabled={weeklySortWeek == null && !weeklyHighsOnly}
-            title="Clear week sort/filter"
-          >
-            Clear week sort
-          </button>
-          
-        </div>
           </span>
           <button
             onClick={nextWeeks}
@@ -277,6 +297,32 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
         </div>
       )}
 
+      {/* Week sort/filter controls */}
+      {showWeeks && (
+        <div className="flex items-center gap-3 mb-2 text-sm">
+          <button
+            type="button"
+            className="px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50"
+            onClick={() => { setWeeklySortWeek(null); setWeeklyHighsOnly(false); }}
+            disabled={weeklySortWeek == null && !weeklyHighsOnly}
+            title="Clear week sort/filter"
+          >
+            Clear week sort
+          </button>
+          <label className={"inline-flex items-center gap-2 " + (weeklySortWeek==null ? "opacity-50" : "")}>
+            <input
+              type="checkbox"
+              className="accent-blue-400"
+              disabled={weeklySortWeek==null}
+              checked={weeklyHighsOnly}
+              onChange={(e) => setWeeklyHighsOnly(e.target.checked)}
+            />
+            <span>
+              Only show weekly highs{weeklySortWeek!=null ? ` (W${weeklySortWeek})` : ""}
+            </span>
+          </label>
+        </div>
+      )}
 
       {/* Table */}
       <table className="w-full text-left border border-gray-700 rounded-lg text-xs sm:text-sm md:text-base">
@@ -314,7 +360,11 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
             <tr
               key={`${o.ownerName}-${idx}`}
               className="border-b border-gray-700 hover:bg-gray-900"
-              onClick={() => !showWeeks && setSelectedOwner(o)}
+              onClick={() => {
+                if (showWeeks) return; // weekly cells have their own click handler
+                // open modal with latest week's roster for this owner
+                handleRowClickLatest(o);
+              }}
             >
               <td className="p-2">{o.globalRank}</td>
               <td className="p-2">{o.ownerName}</td>
