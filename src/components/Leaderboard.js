@@ -368,28 +368,6 @@ const handleRowClickLatest = async (owner) => {
         </div>
       </div>
 
-      {/* Weeks pager */}
-      {showWeeks && currentWeeks.length > 0 && (
-        <div className="flex items-center justify-between mb-2 text-sm">
-          <button
-            onClick={prevWeeks}
-            disabled={visibleWeeksStart === 0}
-            className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded disabled:opacity-50"
-          >
-            ◀ Prev
-          </button>
-          <span className="text-white">
-            Showing weeks {visibleWeeksStart + 1}-{Math.min(visibleWeeksStart + WEEKS_WINDOW, maxWeeks)}
-          </span>
-          <button
-            onClick={nextWeeks}
-            disabled={visibleWeeksStart + WEEKS_WINDOW >= maxWeeks}
-            className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded disabled:opacity-50"
-          >
-            Next ▶
-          </button>
-        </div>
-      )}
 
       {/* Week sort/filter controls */}
       {showWeeks && currentWeeks.length > 0 && (
