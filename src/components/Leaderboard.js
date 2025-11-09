@@ -86,6 +86,64 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
     setVisibleWeeksStart(0);
   }, [year, category, showWeeks]);
   useEffect(() => { setWeeklySortWeek(null); setWeeklyHighsOnly(false); }, [year, category, showWeeks]);
+  // helper used in multiple places
+const sumPoints = (arr = []) =>
+  arr.reduce(
+    (s, p) =>
+      s +
+      Number(
+        p?.points ??
+        p?.pts ??
+        p?.score ??
+        p?.value ??
+        0
+      ),
+    0
+  );
+
+// When Weekly is turned on and weeklyData is ready, jump pager to latest non-zero week
+useEffect(() => {
+  if (!showWeeks || !weeklyData) return;
+
+  const weeks = Array.isArray(data.weeks) ? [...data.weeks] : [];
+  if (!weeks.length) return;
+
+  // Descending: newest → oldest
+  weeks.sort((a, b) => b - a);
+
+  // Does ANY owner have non-zero points this week?
+  const ownerHasPoints = (wk) => {
+    for (const o of rankedOwners) {
+      // 1) Use precomputed weekly totals on the owner if available
+      const val = typeof o.weekly?.[wk] === "number" ? o.weekly[wk] : null;
+      if (val != null && val > 0) return true;
+
+      // 2) Fallback to roster records in weeklyData
+      const leagueWeeks = weeklyData[year]?.[category]?.[o.leagueName] || {};
+      const recArr = leagueWeeks[wk] || [];
+      const rec = recArr.find((r) => r.ownerName === o.ownerName);
+      if (rec) {
+        const total = sumPoints(rec.starters) + sumPoints(rec.bench);
+        if (total > 0) return true;
+      }
+    }
+    return false;
+  };
+
+  let targetWeek = null;
+  for (const wk of weeks) {
+    if (ownerHasPoints(wk)) {
+      targetWeek = wk;
+      break;
+    }
+  }
+  if (targetWeek == null) return;
+
+  // Position pager so targetWeek is visible in the WEEKS_WINDOW
+  const start = Math.floor((targetWeek - 1) / WEEKS_WINDOW) * WEEKS_WINDOW;
+  setVisibleWeeksStart(start);
+}, [showWeeks, weeklyData, year, category, rankedOwners, data.weeks]);
+
 
   // Helper: load weekly data (used both by Weekly view and by row click when Weekly is off)
   const loadWeeklyDataForYear = async () => {
