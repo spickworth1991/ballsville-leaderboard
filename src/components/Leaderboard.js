@@ -188,63 +188,59 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
   return (
     <div className="w-full">
       {/* Header */}
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between mb-4">
-        <div>
-          <p className="text-sm text-white/60">
-            {uniqueOwners} owners across {totalTeams} teams
-          </p>
-        
+      <div className="flex flex-wrap items-center justify-between gap-4 mb-4 px-2 sm:px-0">
+        {/* Left: Owners & Teams */}
+        <p className="text-sm text-white/60 whitespace-nowrap">
+          {uniqueOwners} owners across {totalTeams} teams
+        </p>
 
-        {/* Search and toggle */}
-        
-          <div className="relative">
-            <input
-              ref={inputRef}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onFocus={() => setFocusSuggest(true)}
-              onBlur={() => setTimeout(() => setFocusSuggest(false), 100)}
-              placeholder="Search owner…"
-              className="px-3 py-2 rounded bg-gray-800 border border-gray-700 outline-none w-56"
-            />
-            {!!q && (
-              <button
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={clearQuery}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-white/60 hover:text-white"
-              >
-                ✕
-              </button>
-            )}
+        {/* Middle: Search */}
+        <div className="relative flex-1 min-w-[200px] max-w-xs">
+          <input
+            ref={inputRef}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onFocus={() => setFocusSuggest(true)}
+            onBlur={() => setTimeout(() => setFocusSuggest(false), 100)}
+            placeholder="Search owner…"
+            className="w-full px-3 py-2 rounded bg-gray-800 border border-gray-700 outline-none"
+          />
+          {!!q && (
+            <button
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={clearQuery}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-white/60 hover:text-white"
+            >
+              ✕
+            </button>
+          )}
 
-            {/* Suggestions */}
-            {focusSuggest && ownerSuggestions.length > 0 && (
-              <div className="absolute z-10 left-0 right-0 mt-1 bg-gray-800 border border-gray-700 rounded shadow-lg max-h-64 overflow-auto">
-                {ownerSuggestions.map((name) => (
-                  <button
-                    key={name}
-                    className="w-full text-left px-4 py-2 text-sm text-white hover:bg-white/5"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => {
-                      setQuery(name);
-                      setFocusSuggest(false);
-                    }}
-                  >
-                    {highlight(name)}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          {/* Suggestions */}
+          {focusSuggest && ownerSuggestions.length > 0 && (
+            <div className="absolute z-10 left-0 right-0 mt-1 bg-gray-800 border border-gray-700 rounded shadow-lg max-h-64 overflow-auto">
+              {ownerSuggestions.map((name) => (
+                <button
+                  key={name}
+                  className="w-full text-left px-4 py-2 text-sm text-white hover:bg-white/5"
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    setQuery(name);
+                    setFocusSuggest(false);
+                  }}
+                >
+                  {highlight(name)}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
 
-          {/* Stats + result count line */}
-          <div className="mt-1 text-xs text-white/50">
-            Showing {currentOwners.length} of {filteredOwners.length}
-          </div>
-
-          
+        {/* Right: Stats line */}
+        <div className="text-xs text-white/50 whitespace-nowrap">
+          Showing {currentOwners.length} of {filteredOwners.length}
         </div>
       </div>
+
 
       {/* Weeks pager */}
       {showWeeks && currentWeeks.length > 0 && (
