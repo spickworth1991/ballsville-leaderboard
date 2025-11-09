@@ -193,10 +193,10 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
           <p className="text-sm text-white/60">
             {uniqueOwners} owners across {totalTeams} teams
           </p>
-        </div>
+        
 
         {/* Search and toggle */}
-        <div className="flex items-center gap-3">
+        
           <div className="relative">
             <input
               ref={inputRef}
