@@ -150,33 +150,69 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
   };
 
   // NEW: open modal for latest week when Weekly is OFF
-  const handleRowClickLatest = async (owner) => {
-    // Ensure weekly data is available (lazy load if needed)
-    let wd = weeklyData;
-    if (!wd) {
-      wd = await loadWeeklyDataForYear();
-      if (!wd) return; // nothing to show
-    }
-    const leagueWeeks = wd[year]?.[category]?.[owner.leagueName] || {};
-    const weekNumbers = Object.keys(leagueWeeks).map((k) => Number(k)).filter(Number.isFinite);
-    if (weekNumbers.length === 0) return;
+  // Prefer the latest week that has actual points (non-zero)
+// Falls back to checking roster arrays if owner.weekly[wk] isn't present.
+const handleRowClickLatest = async (owner) => {
+  // Ensure weekly data is available (lazy load if needed)
+  let wd = weeklyData;
+  if (!wd) {
+    wd = await loadWeeklyDataForYear();
+    if (!wd) return;
+  }
 
-    // Prefer the latest week that actually contains this owner
-    weekNumbers.sort((a, b) => b - a);
-    let chosen = null;
-    for (const wk of weekNumbers) {
-      const arr = leagueWeeks[wk] || [];
-      const hit = arr.find((r) => r.ownerName === owner.ownerName);
-      if (hit) {
-        chosen = { week: wk, starters: hit.starters, bench: hit.bench };
-        break;
-      }
-    }
-    if (!chosen) return;
+  const leagueWeeks = wd[year]?.[category]?.[owner.leagueName] || {};
+  const weekNumbers = Object.keys(leagueWeeks)
+    .map((k) => Number(k))
+    .filter(Number.isFinite)
+    .sort((a, b) => b - a); // latest → earliest
 
-    setSelectedOwner(owner);
-    setSelectedRoster(chosen);
+  const getOwnerRec = (wk) => {
+    const arr = leagueWeeks[wk] || [];
+    return arr.find((r) => r.ownerName === owner.ownerName);
   };
+
+  const sumPoints = (arr = []) =>
+    arr.reduce(
+      (s, p) =>
+        s +
+        Number(
+          p?.points ??
+          p?.pts ??
+          p?.score ??
+          p?.value ??
+          0
+        ),
+      0
+    );
+
+  const isNonZeroWeek = (wk) => {
+    // 1) Use precomputed weekly totals on the owner if available
+    const val = typeof owner.weekly?.[wk] === "number" ? owner.weekly[wk] : null;
+    if (val != null && val > 0) return true;
+
+    // 2) Otherwise, inspect the roster record
+    const rec = getOwnerRec(wk);
+    if (!rec) return false;
+    const total = sumPoints(rec.starters) + sumPoints(rec.bench);
+    return total > 0;
+  };
+
+  // Pick the latest non-zero week
+  let chosen = null;
+  for (const wk of weekNumbers) {
+    if (isNonZeroWeek(wk)) {
+      const rec = getOwnerRec(wk);
+      if (!rec) continue;
+      chosen = { week: wk, starters: rec.starters, bench: rec.bench };
+      break;
+    }
+  }
+
+  if (!chosen) return; // nothing meaningful to show
+
+  setSelectedOwner(owner);
+  setSelectedRoster(chosen);
+};
 
   const maxWeeks = Array.isArray(data.weeks) ? data.weeks.length : 0;
   const currentWeeks =
