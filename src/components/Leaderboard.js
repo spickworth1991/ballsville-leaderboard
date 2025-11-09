@@ -254,6 +254,18 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
           </button>
           <span className="text-white">
             Showing weeks {visibleWeeksStart + 1}-{Math.min(visibleWeeksStart + WEEKS_WINDOW, maxWeeks)}
+            <div className="flex items-center gap-3 mb-2 text-sm">
+          <button
+            type="button"
+            className="px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50"
+            onClick={() => { setWeeklySortWeek(null); setWeeklyHighsOnly(false); }}
+            disabled={weeklySortWeek == null && !weeklyHighsOnly}
+            title="Clear week sort/filter"
+          >
+            Clear week sort
+          </button>
+          
+        </div>
           </span>
           <button
             onClick={nextWeeks}
@@ -265,30 +277,6 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
         </div>
       )}
 
-      {/* Week sort/filter controls */}
-      {showWeeks && (
-        <div className="flex items-center gap-3 mb-2 text-sm">
-          <button
-            type="button"
-            className="px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50"
-            onClick={() => { setWeeklySortWeek(null); setWeeklyHighsOnly(false); }}
-            disabled={weeklySortWeek == null && !weeklyHighsOnly}
-            title="Clear week sort/filter"
-          >
-            Clear week sort
-          </button>
-          <label className={"inline-flex items-center gap-2 " + (weeklySortWeek==null ? "opacity-50" : "")}>
-            <input
-              type="checkbox"
-              className="accent-blue-400"
-              disabled={weeklySortWeek==null}
-              checked={weeklyHighsOnly}
-              onChange={(e) => setWeeklyHighsOnly(e.target.checked)}
-            />
-            
-          </label>
-        </div>
-      )}
 
       {/* Table */}
       <table className="w-full text-left border border-gray-700 rounded-lg text-xs sm:text-sm md:text-base">
