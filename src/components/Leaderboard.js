@@ -14,7 +14,7 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
     const list = [...data.owners].sort((a, b) =>
       (b.total - a.total) ||
       a.ownerName.localeCompare(b.ownerName) ||
-      a.leagueName.localeCompare(b.leagueName)
+      (a.leagueName || "").localeCompare(b.leagueName || "")
     );
     return list.map((o, i) => ({ ...o, globalRank: i + 1 }));
   }, [data.owners]);
@@ -27,10 +27,34 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
   const norm = (s) => String(s || "").toLowerCase().trim();
   const q = norm(query);
 
-   const filteredOwners = useMemo(() => {
-    if (!q) return rankedOwners;
-    return rankedOwners.filter((o) => norm(o.ownerName).includes(q));
-  }, [q, rankedOwners]);
+  // -------- Weekly sort/filter ----------
+  const [weeklySortWeek, setWeeklySortWeek] = useState(null); // number | null
+  const [weeklySortDir, setWeeklySortDir] = useState("desc"); // "asc" | "desc"
+  const [weeklyHighsOnly, setWeeklyHighsOnly] = useState(false);
+
+  // Suggestions
+  const filteredOwners = useMemo(() => {
+    let base = !q ? rankedOwners : rankedOwners.filter((o) => norm(o.ownerName).includes(q));
+
+    // When in weeks view and a sort week is selected, sort by that week's score
+    if (showWeeks && weeklySortWeek != null) {
+      const w = weeklySortWeek;
+      base = [...base].sort((a, b) => {
+        const av = typeof a.weekly?.[w] === "number" ? a.weekly[w] : -Infinity;
+        const bv = typeof b.weekly?.[w] === "number" ? b.weekly[w] : -Infinity;
+        if (av === bv) return (a.globalRank || 0) - (b.globalRank || 0);
+        return weeklySortDir === "asc" ? av - bv : bv - av;
+      });
+      if (weeklyHighsOnly) {
+        const max = base.reduce((m, o) => {
+          const v = typeof o.weekly?.[w] === "number" ? o.weekly[w] : -Infinity;
+          return Math.max(m, v);
+        }, -Infinity);
+        base = base.filter(o => (typeof o.weekly?.[w] === "number" ? o.weekly[w] : -Infinity) === max);
+      }
+    }
+    return base;
+  }, [q, rankedOwners, showWeeks, weeklySortWeek, weeklySortDir, weeklyHighsOnly]);
 
   const ownerSuggestions = useMemo(() => {
     if (!q) return [];
@@ -50,10 +74,6 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
     setPage(1); // reset to page 1 whenever filter changes
   }, [q, year, category]);
 
-  const totalPages = Math.ceil(filteredOwners.length / itemsPerPage) || 1;
-  const startIndex = (page - 1) * itemsPerPage;
-  const currentOwners = filteredOwners.slice(startIndex, startIndex + itemsPerPage);
-
   // -------- Weekly data (per-year) ----------
   const [selectedOwner, setSelectedOwner] = useState(null);
   const [selectedRoster, setSelectedRoster] = useState(null);
@@ -65,6 +85,8 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
   useEffect(() => {
     setVisibleWeeksStart(0);
   }, [year, category, showWeeks]);
+
+  useEffect(() => { setWeeklySortWeek(null); setWeeklyHighsOnly(false); }, [year, category, showWeeks]);
 
   useEffect(() => {
     // Only try to load weekly data when the Weeks view is actually ON
@@ -88,7 +110,7 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
         const manifest = await manRes.json(); // { parts: ["weekly_rosters_YYYY_part1.json", ...] }
 
         let combined = {};
-        for (const part of manifest.parts || []) {
+        for (const part of (manifest.parts || [])) {
           const url = `/data/${part}`;
           const res = await fetch(url, { cache: "no-store" });
           if (!res.ok) continue;
@@ -110,7 +132,7 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
     };
 
     loadWeeklyData();
-  }, [year, showWeeks]);
+  }, [showWeeks, year, category]);
 
   const handleWeeklyClick = (owner, week) => {
     if (!showWeeks || !weeklyData) return;
@@ -153,47 +175,52 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
     return (
       <>
         {n.slice(0, i)}
-        <span className="bg-yellow-400/30">{n.slice(i, i + q.length)}</span>
+        <span className="text-blue-400">{n.slice(i, i + q.length)}</span>
         {n.slice(i + q.length)}
       </>
     );
   };
 
-  return (
-    <div className="overflow-x-auto animate-fadeIn pt-2">
-      {/* Premium Owner Search */}
-      <div className="max-w-3xl mx-auto w-full mb-4 px-2">
-        <div className="relative">
-          <div className="flex items-center gap-2 bg-gray-900/70 border border-white/10 rounded-xl px-3 py-2">
-            {/* magnifier */}
-            <svg width="18" height="18" viewBox="0 0 24 24" className="opacity-70">
-              <path fill="currentColor" d="M15.5 14h-.79l-.28-.27a6.471 6.471 0 0 0 1.57-4.23A6.5 6.5 0 1 0 9.5 16a6.471 6.471 0 0 0 4.23-1.57l.27.28v.79L20 21.5L21.5 20zM4 9.5C4 6.46 6.46 4 9.5 4S15 6.46 15 9.5S12.54 15 9.5 15S4 12.54 4 9.5" />
-            </svg>
+  const totalPages = Math.ceil(filteredOwners.length / itemsPerPage) || 1;
+  const startIndex = (page - 1) * itemsPerPage;
+  const currentOwners = filteredOwners.slice(startIndex, startIndex + itemsPerPage);
 
+  return (
+    <div className="w-full">
+      {/* Header */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between mb-4">
+        <div>
+          <h2 className="text-xl font-bold">Leaderboard — {year} ({category})</h2>
+          <p className="text-sm text-white/60">
+            {uniqueOwners} owners across {totalTeams} teams
+          </p>
+        </div>
+
+        {/* Search and toggle */}
+        <div className="flex items-center gap-3">
+          <div className="relative">
             <input
               ref={inputRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onFocus={() => setFocusSuggest(true)}
-              onBlur={() => setTimeout(() => setFocusSuggest(false), 120)}
-              placeholder="Search owners…"
-              className="flex-1 bg-transparent outline-none text-sm text-white placeholder-white/40"
+              onBlur={() => setTimeout(() => setFocusSuggest(false), 100)}
+              placeholder="Search owner…"
+              className="px-3 py-2 rounded bg-gray-800 border border-gray-700 outline-none w-56"
             />
-
-            {query && (
+            {!!q && (
               <button
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={clearQuery}
-                className="text-white/70 hover:text-white text-xs px-2 py-1 rounded-md bg-white/10"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-white/60 hover:text-white"
               >
-                Clear
+                ✕
               </button>
             )}
-          </div>
 
-          {/* Suggestions dropdown */}
-          {focusSuggest && ownerSuggestions.length > 0 && (
-            <div className="absolute left-0 right-0 mt-2 bg-gray-950 border border-white/10 rounded-xl shadow-2xl overflow-hidden z-20">
-              <div className="max-h-72 overflow-y-auto divide-y divide-white/10">
+            {/* Suggestions */}
+            {focusSuggest && ownerSuggestions.length > 0 && (
+              <div className="absolute z-10 left-0 right-0 mt-1 bg-gray-800 border border-gray-700 rounded shadow-lg max-h-64 overflow-auto">
                 {ownerSuggestions.map((name) => (
                   <button
                     key={name}
@@ -208,20 +235,30 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
                   </button>
                 ))}
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
           {/* Stats + result count line */}
           <div className="mt-1 text-xs text-white/50">
-            Total teams drafted {year}: <span className="text-white">{totalTeams}</span> •{" "}
-            Unique owners in {year}: <span className="text-white">{uniqueOwners}</span>
+            Showing {currentOwners.length} of {filteredOwners.length}
           </div>
+
+          {/* Weeks toggle */}
+          <label className="inline-flex items-center gap-2 ml-2">
+            <input
+              type="checkbox"
+              checked={showWeeks}
+              onChange={(e) => setShowWeeks(e.target.checked)}
+              className="accent-blue-400"
+            />
+            <span>Weekly</span>
+          </label>
         </div>
       </div>
 
       {/* Weeks pager */}
-      {showWeeks && maxWeeks > 0 && (
-        <div className="flex justify-center items-center gap-3 mb-4">
+      {showWeeks && currentWeeks.length > 0 && (
+        <div className="flex items-center justify-between mb-2 text-sm">
           <button
             onClick={prevWeeks}
             disabled={visibleWeeksStart === 0}
@@ -242,6 +279,33 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
         </div>
       )}
 
+      {/* Week sort/filter controls */}
+      {showWeeks && (
+        <div className="flex items-center gap-3 mb-2 text-sm">
+          <button
+            type="button"
+            className="px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50"
+            onClick={() => { setWeeklySortWeek(null); setWeeklyHighsOnly(false); }}
+            disabled={weeklySortWeek == null && !weeklyHighsOnly}
+            title="Clear week sort/filter"
+          >
+            Clear week sort
+          </button>
+          <label className={"inline-flex items-center gap-2 " + (weeklySortWeek==null ? "opacity-50" : "")}>
+            <input
+              type="checkbox"
+              className="accent-blue-400"
+              disabled={weeklySortWeek==null}
+              checked={weeklyHighsOnly}
+              onChange={(e) => setWeeklyHighsOnly(e.target.checked)}
+            />
+            <span>
+              Only show weekly highs{weeklySortWeek!=null ? ` (W${weeklySortWeek})` : ""}
+            </span>
+          </label>
+        </div>
+      )}
+
       {/* Table */}
       <table className="w-full text-left border border-gray-700 rounded-lg text-xs sm:text-sm md:text-base">
         <thead>
@@ -252,7 +316,23 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
             {showLeagueColumn && <th className="p-2">League</th>}
             {showWeeks &&
               currentWeeks.map((w) => (
-                <th key={w} className="p-2 text-center whitespace-nowrap">W{w}</th>
+                <th key={w} className="p-2 text-center whitespace-nowrap">
+                  <button
+                    type="button"
+                    className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600"
+                    onClick={() => {
+                      if (weeklySortWeek === w) {
+                        setWeeklySortDir(d => (d === "desc" ? "asc" : "desc"));
+                      } else {
+                        setWeeklySortWeek(w);
+                        setWeeklySortDir("desc");
+                      }
+                    }}
+                    title="Sort by this week's points"
+                  >
+                    W{w}{weeklySortWeek === w ? (weeklySortDir === "desc" ? " ↓" : " ↑") : ""}
+                  </button>
+                </th>
               ))}
             <th className="p-2">Total</th>
           </tr>
@@ -278,7 +358,7 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
                     }}
                     className="p-2 text-center text-blue-400 cursor-pointer hover:bg-blue-700 hover:text-white rounded transition"
                   >
-                    {o.weekly[w]?.toFixed(2) || "-"}
+                    {typeof o.weekly?.[w] === "number" ? o.weekly[w].toFixed(2) : "-"}
                   </td>
                 ))}
               <td className="p-2 font-bold">{o.total}</td>
@@ -295,21 +375,21 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
             disabled={page === 1}
             className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded disabled:opacity-50"
           >
-            Prev
+            ◀ Prev
           </button>
-          <span>Page {page} of {totalPages}</span>
+          <div className="px-3 py-2">Page {page} of {totalPages}</div>
           <button
             onClick={() => setPage((p) => Math.min(p + 1, totalPages))}
             disabled={page === totalPages}
             className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded disabled:opacity-50"
           >
-            Next
+            Next ▶
           </button>
         </div>
       )}
 
-      {/* Modal */}
-      {selectedOwner && (
+      {/* Owner modal (weekly details) */}
+      {selectedOwner && selectedRoster && (
         <OwnerModal
           owner={selectedOwner}
           selectedRoster={selectedRoster}
