@@ -392,8 +392,18 @@ const handleRowClickLatest = async (owner) => {
       )}
 
       {/* Week sort/filter controls */}
-      {showWeeks && (
-        <div className="flex items-center gap-3 mb-2 text-sm">
+      {showWeeks && currentWeeks.length > 0 && (
+        <div className="flex items-center justify-between mb-2 text-sm">
+          <button
+            onClick={prevWeeks}
+            disabled={visibleWeeksStart === 0}
+            className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded disabled:opacity-50"
+          >
+            ◀ Prev
+          </button>
+          <span className="text-white">
+            Showing weeks {visibleWeeksStart + 1}-{Math.min(visibleWeeksStart + WEEKS_WINDOW, maxWeeks)}
+            <div className="flex items-center gap-3 mb-2 text-sm">
           <button
             type="button"
             className="px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50"
@@ -403,18 +413,16 @@ const handleRowClickLatest = async (owner) => {
           >
             Clear week sort
           </button>
-          <label className={"inline-flex items-center gap-2 " + (weeklySortWeek==null ? "opacity-50" : "")}>
-            <input
-              type="checkbox"
-              className="accent-blue-400"
-              disabled={weeklySortWeek==null}
-              checked={weeklyHighsOnly}
-              onChange={(e) => setWeeklyHighsOnly(e.target.checked)}
-            />
-            <span>
-              Only show weekly highs{weeklySortWeek!=null ? ` (W${weeklySortWeek})` : ""}
-            </span>
-          </label>
+          
+        </div>
+          </span>
+          <button
+            onClick={nextWeeks}
+            disabled={visibleWeeksStart + WEEKS_WINDOW >= maxWeeks}
+            className="px-3 py-1 bg-gray-700 hover:bg-gray-600 rounded disabled:opacity-50"
+          >
+            Next ▶
+          </button>
         </div>
       )}
 
