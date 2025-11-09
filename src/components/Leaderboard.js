@@ -190,7 +190,6 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
       {/* Header */}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between mb-4">
         <div>
-          <h2 className="text-xl font-bold">Leaderboard — {year} ({category})</h2>
           <p className="text-sm text-white/60">
             {uniqueOwners} owners across {totalTeams} teams
           </p>
@@ -243,16 +242,7 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
             Showing {currentOwners.length} of {filteredOwners.length}
           </div>
 
-          {/* Weeks toggle */}
-          <label className="inline-flex items-center gap-2 ml-2">
-            <input
-              type="checkbox"
-              checked={showWeeks}
-              onChange={(e) => setShowWeeks(e.target.checked)}
-              className="accent-blue-400"
-            />
-            <span>Weekly</span>
-          </label>
+          
         </div>
       </div>
 
@@ -299,9 +289,7 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
               checked={weeklyHighsOnly}
               onChange={(e) => setWeeklyHighsOnly(e.target.checked)}
             />
-            <span>
-              Only show weekly highs{weeklySortWeek!=null ? ` (W${weeklySortWeek})` : ""}
-            </span>
+            
           </label>
         </div>
       )}
