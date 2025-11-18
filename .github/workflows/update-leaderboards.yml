@@ -1,10 +1,8 @@
 name: Update leaderboards (current year)
 
 on:
-  # 🔁 Runs automatically – change cron to whatever schedule you want
   schedule:
-    - cron: "*/20 * * * *"  # Every 10 minutes, all days
-  # 🔘 Manual run button in GitHub UI
+    - cron: "*/20 * * * *"  
   workflow_dispatch: {}
 
 jobs:
@@ -25,16 +23,12 @@ jobs:
 
       - name: Generate current-year leaderboard JSON
         env:
-          # Tell the script which year(s) to run for
           USE_CACHED_PLAYERS: "true"
         run: |
           YEAR=$(date +'%Y')
           echo "Generating leaderboards for year ${YEAR}"
           export LEADERBOARD_YEARS="${YEAR}"
           node scripts/sched.js
-
-      - name: Check AWS CLI
-        run: aws --version
 
       - name: Upload JSONs to R2 (current year + aliases)
         env:

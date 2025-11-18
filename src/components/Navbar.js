@@ -38,7 +38,6 @@ export default function Navbar({ data, years: yearsProp, current, setCurrent, sh
     if (activeMode && activeMode !== current.mode) {
       setCurrent((prev) => ({ ...prev, mode: activeMode, filterType: 'all', filterValue: null }));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeMode]);
 
   const activeBlock = data?.[current.year]?.[activeMode];

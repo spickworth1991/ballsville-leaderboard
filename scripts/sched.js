@@ -1,5 +1,5 @@
-// scripts/auto-gen.js
-// Wrapper to run generate-leaderboards.mjs in "auto" mode for the current year,
+// scripts/sched.js
+// Wrapper to run auto-gen.js in "auto" mode for the current year,
 // but ONLY during NFL game windows (Detroit time). It also writes a flag
 // file when it actually runs, so GitHub Actions can decide whether to upload.
 
