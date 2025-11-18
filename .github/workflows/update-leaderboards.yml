@@ -31,12 +31,17 @@ jobs:
           YEAR=$(date +'%Y')
           echo "Generating leaderboards for year ${YEAR}"
           export LEADERBOARD_YEARS="${YEAR}"
-          node scripts/auto-gen.js
+          node scripts/sched.js
 
-      - name: Install AWS CLI (for R2 uploads)
+      - name: Install AWS CLI v2 (for R2 uploads)
         run: |
           sudo apt-get update
-          sudo apt-get install -y awscli
+          sudo apt-get install -y unzip
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+          unzip awscliv2.zip
+          sudo ./aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli
+          aws --version
+
 
       - name: Upload JSONs to R2 (current year + aliases)
         env:
