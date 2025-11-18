@@ -12,7 +12,7 @@ const MAX_WEEKS = 18;
 const CURRENT_YEAR = String(new Date().getFullYear());
 
 
-const BACKUP_DIR = "backup";        // outputs go here
+const BACKUP_DIR = "auto";        // outputs go here
 const PLAYER_FILE = path.join(BACKUP_DIR, "sleeper_players.json");
 
 // Per-year naming
