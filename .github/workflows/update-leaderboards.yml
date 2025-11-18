@@ -3,7 +3,7 @@ name: Update leaderboards (current year)
 on:
   # 🔁 Runs automatically – change cron to whatever schedule you want
   schedule:
-    - cron: "0 */2 * * *"
+    - cron: "*/20 * * * *"  # Every 10 minutes, all days
   # 🔘 Manual run button in GitHub UI
   workflow_dispatch: {}
 
