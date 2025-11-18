@@ -1,7 +1,6 @@
 // src/components/Leaderboard.jsx
 import { useRef, useState, useEffect, useMemo } from "react";
 import { useLeaderboard } from "../context/LeaderboardContext";
-import { getInitialConfig } from "../initConfig";
 import OwnerModal from "./OwnerModal";
 
 const WEEKS_WINDOW = 3; // how many weeks to show at once

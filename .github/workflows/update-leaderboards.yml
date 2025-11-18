@@ -45,31 +45,39 @@ jobs:
           R2_BUCKET: "leaderboard-data"
         run: |
           set -e
+
+          # If auto-gen didn't actually run (outside game window),
+          # the flag file won't exist – skip upload cleanly.
+          if [ ! -f ".leaderboard_update_done" ]; then
+            echo "ℹ️ No leaderboard update this run (outside NFL window) – skipping R2 upload."
+            exit 0
+          fi
+
           YEAR=$(date +'%Y')
           ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 
           echo "Uploading leaderboards_${YEAR}.json..."
-          aws s3 cp "auto/leaderboards_${YEAR}.json" \
+          aws s3 cp "backup/leaderboards_${YEAR}.json" \
             "s3://${R2_BUCKET}/leaderboards_${YEAR}.json" \
             --endpoint-url "$ENDPOINT"
 
           # Alias: keep your existing frontend path /data/leaderboards.json
-          aws s3 cp "auto/leaderboards_${YEAR}.json" \
+          aws s3 cp "backup/leaderboards_${YEAR}.json" \
             "s3://${R2_BUCKET}/leaderboards.json" \
             --endpoint-url "$ENDPOINT"
 
           echo "Uploading weekly_manifest_${YEAR}.json..."
-          aws s3 cp "auto/weekly_manifest_${YEAR}.json" \
+          aws s3 cp "backup/weekly_manifest_${YEAR}.json" \
             "s3://${R2_BUCKET}/weekly_manifest_${YEAR}.json" \
             --endpoint-url "$ENDPOINT"
 
           # Alias: /data/weekly_manifest.json
-          aws s3 cp "auto/weekly_manifest_${YEAR}.json" \
+          aws s3 cp "backup/weekly_manifest_${YEAR}.json" \
             "s3://${R2_BUCKET}/weekly_manifest.json" \
             --endpoint-url "$ENDPOINT"
 
           echo "Uploading weekly rosters parts for ${YEAR}..."
-          for f in auto/weekly_rosters_${YEAR}_part*.json; do
+          for f in backup/weekly_rosters_${YEAR}_part*.json; do
             [ -e "$f" ] || continue
             base=$(basename "$f")
 
@@ -86,3 +94,4 @@ jobs:
           done
 
           echo "✅ R2 upload complete."
+
