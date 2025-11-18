@@ -1,20 +1,26 @@
+// components/Navbar.jsx
 'use client';
 import { useMemo, useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom'; 
 
-export default function Navbar({ data, current, setCurrent, showWeeks, setShowWeeks }) {
-  const [openSheet, setOpenSheet] = useState(null); // 'divisions' | 'leagues' | null
+export default function Navbar({ data, years: yearsProp, current, setCurrent, showWeeks, setShowWeeks }) {
+  const [openSheet, setOpenSheet] = useState(null);
   const [search, setSearch] = useState('');
 
   if (!data) return null;
 
-  const years = useMemo(() => Object.keys(data).sort((a, b) => b.localeCompare(a)), [data]);
+  // Prefer the explicit list from props; otherwise fall back to whatever is in data
+  const years = useMemo(() => {
+    const base = (yearsProp?.length ? yearsProp : Object.keys(data || {}));
+    return [...base].sort((a, b) => b.localeCompare(a));
+  }, [yearsProp, data]);
 
-  // Build modes dynamically for selected year
+  // ✅ Build the available modes for the selected year (adds missing variable)
   const availableModes = useMemo(() => {
     const yearBlock = data?.[current.year] || {};
-    const order = { big_game: 1, mini_game: 2, redraft_2025: 3, redraft: 3, triathlon: 4, dynasty: 5 };
-    return Object.keys(yearBlock).sort((a, b) => (order[a] ?? 99) - (order[b] ?? 99) || a.localeCompare(b));
+    const order = { big_game: 1, mini_game: 2, redraft_2025: 3, redraft: 3, gauntlet: 4, dynasty: 5 };
+    return Object.keys(yearBlock)
+      .sort((a, b) => (order[a] ?? 99) - (order[b] ?? 99) || a.localeCompare(b));
   }, [data, current.year]);
 
   // Keep mode valid
@@ -36,7 +42,7 @@ export default function Navbar({ data, current, setCurrent, showWeeks, setShowWe
   }, [activeMode]);
 
   const activeBlock = data?.[current.year]?.[activeMode];
-  const isTriathlon = activeMode === 'triathlon';
+  const isGauntlet = activeMode === 'gauntlet';
   const isRedraft2025 = activeMode === 'redraft_2025';
 
   const shortModeName = (val, key) => {
@@ -92,7 +98,6 @@ export default function Navbar({ data, current, setCurrent, showWeeks, setShowWe
       "
     >
 
-
     {/* Left: Logo + Titles */}
     <div className="flex items-center gap-3 min-w-0">
       <img
@@ -130,7 +135,6 @@ export default function Navbar({ data, current, setCurrent, showWeeks, setShowWe
         justify-end max-[610px]:justify-center
       "
     >
-
 
       {/* Row A: Years + Weekly toggle */}
       <div
@@ -221,9 +225,9 @@ export default function Navbar({ data, current, setCurrent, showWeeks, setShowWe
           ? 'bg-gray-800/60 text-white/40 border-white/10 cursor-not-allowed'
           : 'bg-white/5 text-white hover:bg-white/10 border-white/10'
       }`}
-      title={isRedraft2025 ? 'No Divisions' : isTriathlon ? 'Browse Legions' : 'Browse Divisions'}
+      title={isRedraft2025 ? 'No Divisions' : isGauntlet ? 'Browse Legions' : 'Browse Divisions'}
     >
-      {isRedraft2025 ? 'No Divisions' : isTriathlon ? 'Legions' : 'Divisions'}
+      {isRedraft2025 ? 'No Divisions' : isGauntlet ? 'Legions' : 'Divisions'}
     </button>
 
     <button
@@ -257,7 +261,7 @@ export default function Navbar({ data, current, setCurrent, showWeeks, setShowWe
       {/* Fullscreen Sheet (ONLY place where search input exists) */}
       <Sheet
         open={!!openSheet}
-        title={openSheet === 'divisions' ? (isTriathlon ? 'Legions' : 'Divisions') : openSheet === 'leagues' ? 'Leagues' : ''}
+        title={openSheet === 'divisions' ? (isGauntlet ? 'Legions' : 'Divisions') : openSheet === 'leagues' ? 'Leagues' : ''}
         onClose={() => {
           setOpenSheet(null);
           setSearch('');
@@ -275,7 +279,7 @@ export default function Navbar({ data, current, setCurrent, showWeeks, setShowWe
                 onClick={() => handleSelect({ filterType: 'division', filterValue: div })}
               >
                 <div className="text-sm text-white">{div}</div>
-                <div className="text-xs text-white/50">{isTriathlon ? 'Legion' : 'Division'}</div>
+                <div className="text-xs text-white/50">{isGauntlet ? 'Legion' : 'Division'}</div>
               </button>
             ))}
           </div>
@@ -439,7 +443,6 @@ function Sheet({ open, title, onClose, children, search, setSearch }) {
   // Render above everything (fixes WP embed z-index issues)
   return createPortal(sheetUI, document.body);
 }
-
 
 function EmptyState({ msg }) {
   return <div className="text-center text-white/60 py-10 text-sm">{msg}</div>;

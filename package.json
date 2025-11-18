@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "generate": "node scripts/generate-leaderboard.js"
+    "update": "node script/generate-leaderboards.js",
+    "git": "git add . && git commit -m 'test' && git push origin feat/per-year-files"
   },
   "dependencies": {
     "autoprefixer": "^10.4.14",
@@ -24,6 +25,7 @@
   "devDependencies": {
     "@cloudflare/next-on-pages": "^1.13.13",
     "@types/react": "19.1.9",
+    "prompts": "^2.4.2",
     "wrangler": "^4.28.1"
   }
 }
