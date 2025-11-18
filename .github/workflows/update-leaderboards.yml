@@ -1,0 +1,97 @@
+name: Update leaderboards (current year)
+
+on:
+  # 🔁 Runs automatically – change cron to whatever schedule you want
+  schedule:
+    - cron: "*/20 * * * *"  # Every 10 minutes, all days
+  # 🔘 Manual run button in GitHub UI
+  workflow_dispatch: {}
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate current-year leaderboard JSON
+        env:
+          # Tell the script which year(s) to run for
+          USE_CACHED_PLAYERS: "true"
+        run: |
+          YEAR=$(date +'%Y')
+          echo "Generating leaderboards for year ${YEAR}"
+          export LEADERBOARD_YEARS="${YEAR}"
+          node scripts/sched.js
+
+      - name: Check AWS CLI
+        run: aws --version
+
+      - name: Upload JSONs to R2 (current year + aliases)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_EC2_METADATA_DISABLED: "true"
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: "leaderboard-data"
+        run: |
+          set -e
+
+          # If auto-gen didn't actually run (outside game window),
+          # the flag file won't exist – skip upload cleanly.
+          if [ ! -f ".leaderboard_update_done" ]; then
+            echo "ℹ️ No leaderboard update this run (outside NFL window) – skipping R2 upload."
+            exit 0
+          fi
+
+          YEAR=$(date +'%Y')
+          ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+
+          echo "Uploading leaderboards_${YEAR}.json..."
+          aws s3 cp "backup/leaderboards_${YEAR}.json" \
+            "s3://${R2_BUCKET}/leaderboards_${YEAR}.json" \
+            --endpoint-url "$ENDPOINT"
+
+          # Alias: keep your existing frontend path /data/leaderboards.json
+          aws s3 cp "backup/leaderboards_${YEAR}.json" \
+            "s3://${R2_BUCKET}/leaderboards.json" \
+            --endpoint-url "$ENDPOINT"
+
+          echo "Uploading weekly_manifest_${YEAR}.json..."
+          aws s3 cp "backup/weekly_manifest_${YEAR}.json" \
+            "s3://${R2_BUCKET}/weekly_manifest_${YEAR}.json" \
+            --endpoint-url "$ENDPOINT"
+
+          # Alias: /data/weekly_manifest.json
+          aws s3 cp "backup/weekly_manifest_${YEAR}.json" \
+            "s3://${R2_BUCKET}/weekly_manifest.json" \
+            --endpoint-url "$ENDPOINT"
+
+          echo "Uploading weekly rosters parts for ${YEAR}..."
+          for f in backup/weekly_rosters_${YEAR}_part*.json; do
+            [ -e "$f" ] || continue
+            base=$(basename "$f")
+
+            echo "  -> ${base}"
+            aws s3 cp "$f" \
+              "s3://${R2_BUCKET}/${base}" \
+              --endpoint-url "$ENDPOINT"
+
+            # Alias: /data/weekly_rosters_partN.json
+            short_name="${base/weekly_rosters_${YEAR}_/weekly_rosters_}"
+            aws s3 cp "$f" \
+              "s3://${R2_BUCKET}/${short_name}" \
+              --endpoint-url "$ENDPOINT"
+          done
+
+          echo "✅ R2 upload complete."
+

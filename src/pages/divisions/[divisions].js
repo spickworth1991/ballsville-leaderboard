@@ -11,9 +11,9 @@ export default function DivisionPage() {
   useEffect(() => {
     if (!router.isReady) return;
 
-    fetch("/data/leaderboard.json")
-      .then(res => res.json())
-      .then(json => {
+    fetch("/data/leaderboard.json", { cache: 'no-store' })
+    .then(res => res.json())
+    .then(json => {
         const divisionName = decodeURIComponent(divisions || "");
         const filteredOwners = json.owners.filter(
           o => o.division?.toLowerCase() === divisionName.toLowerCase()

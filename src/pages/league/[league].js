@@ -9,11 +9,9 @@ export default function LeaguePage() {
   const [data, setData] = useState(null);
 
   useEffect(() => {
-    if (league) {
-      fetch("/data/leaderboard.json")
-        .then(res => res.json())
-        .then(json => setData(json));
-    }
+  fetch("/data/leaderboard.json", { cache: 'no-store' })
+    .then(res => res.json())
+    .then(json => setData(json));
   }, [league]);
 
   if (!data) return <div className="text-center text-white mt-10">Loading...</div>;

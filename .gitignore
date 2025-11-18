@@ -132,6 +132,8 @@ dist
 # Replit debugger
 .breakpoints
 
-/scripts
+/script
 /backup
+/backup2
 auto.js
+run.py

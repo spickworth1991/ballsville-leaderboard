@@ -1,0 +1,24 @@
+/*.json
+  Cache-Control: public, max-age=5, stale-while-revalidate=30
+  Access-Control-Allow-Origin: *
+
+/data/*
+  Cache-Control: public, max-age=5, stale-while-revalidate=30
+  Access-Control-Allow-Origin: *
+
+/*.png
+  Cache-Control: public, max-age=86400, immutable
+/*.jpg
+  Cache-Control: public, max-age=86400, immutable
+/*.jpeg
+  Cache-Control: public, max-age=86400, immutable
+/*.webp
+  Cache-Control: public, max-age=86400, immutable
+/*.svg
+  Cache-Control: public, max-age=86400, immutable
+/*.gif
+  Cache-Control: public, max-age=86400, immutable
+
+/admin
+  Content-Security-Policy: default-src 'self'; script-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'
+  Cache-Control: no-store
