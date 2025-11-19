@@ -9,7 +9,7 @@ export default function Leaderboard({ data, year, category, showWeeks, setShowWe
   const { statsByYear } = useLeaderboard();
   const { totalTeams = 0, uniqueOwners = 0 } = statsByYear?.[year] || {};
 
-  // Build a globally-ranked list (stable tie-breakers)
+  // Build a globally-ranked list 
   const rankedOwners = useMemo(() => {
     const list = [...data.owners].sort((a, b) =>
       (b.total - a.total) ||
