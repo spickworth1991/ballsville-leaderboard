@@ -56,7 +56,7 @@ console.log(
   `🏈 In NFL game window – auto-generating leaderboards for year ${year}...`
 );
 
-const child = spawn("node", ["scripts/generate-leaderboards.mjs"], {
+const child = spawn("node", ["scripts/auto-gen.js"], {
   stdio: "inherit",
   env: {
     ...process.env,
@@ -67,7 +67,7 @@ const child = spawn("node", ["scripts/generate-leaderboards.mjs"], {
 
 child.on("close", (code) => {
   if (code !== 0) {
-    console.error(`❌ generate-leaderboards.mjs exited with code ${code}`);
+    console.error(`❌ auto-gen.js exited with code ${code}`);
     process.exit(code);
   }
 
