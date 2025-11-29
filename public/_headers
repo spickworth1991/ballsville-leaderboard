@@ -1,3 +1,6 @@
+/* 
+  Content-Security-Policy: frame-ancestors https://ballsville.pages.dev/ https://www.ballsville.pages.dev/ https://www.theballsvillegame.com https://theballsvillegame.com
+
 /*.json
   Cache-Control: public, max-age=5, stale-while-revalidate=30
   Access-Control-Allow-Origin: *
