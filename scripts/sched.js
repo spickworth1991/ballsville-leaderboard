@@ -6,6 +6,8 @@
 const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
+const FORCE_RUN = process.env.FORCE_RUN === "true";
+
 
 const FLAG_PATH = path.join(__dirname, "..", ".leaderboard_update_done");
 
@@ -43,13 +45,17 @@ try {
   // ignore
 }
 
-if (!inGameWindow()) {
+if (!FORCE_RUN && !inGameWindow()) {
   console.log(
     "⏱ Outside NFL game window (Detroit time) – skipping auto generation."
   );
-  // No flag written → upload step will skip
   process.exit(0);
 }
+
+if (FORCE_RUN) {
+  console.log("⚡ FORCE_RUN enabled – ignoring NFL game window.");
+}
+
 
 const year = new Date().getFullYear().toString();
 console.log(

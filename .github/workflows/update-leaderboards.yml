@@ -4,8 +4,14 @@ on:
   # 🔁 Runs automatically – change cron to whatever schedule you want
   schedule:
     - cron: "*/10 * * * *"  # Every 10 minutes, all days
+
   # 🔘 Manual run button in GitHub UI
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      force_run:
+        description: "Ignore NFL game window and force generation"
+        required: false
+        default: "false"
 
 jobs:
   update:
@@ -18,7 +24,7 @@ jobs:
       - name: Use Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: "20"
 
       - name: Install dependencies
         run: npm ci
@@ -26,6 +32,9 @@ jobs:
       - name: Generate current-year leaderboard JSON
         env:
           USE_CACHED_PLAYERS: "true"
+          # Will be "true" or "false" (string) when manually triggered,
+          # and empty on cron → sched.js treats empty as false.
+          FORCE_RUN: ${{ github.event.inputs.force_run || 'false' }}
         run: |
           YEAR=$(date +'%Y')
           echo "Generating leaderboards for year ${YEAR}"
@@ -90,4 +99,3 @@ jobs:
           done
 
           echo "✅ R2 upload complete."
-
