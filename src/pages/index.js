@@ -1,6 +1,6 @@
 // pages/index.js
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Navbar from '../components/Navbar';
 import Leaderboard from '../components/Leaderboard';
 import useR2Live from '../hooks/useR2Live';
@@ -140,6 +140,8 @@ export default function Home() {
     }
 
     let nextMode = current.mode;
+
+    // If preset/URL mode doesn't exist in this year's data, fall back sanely
     if (!modes.includes(nextMode)) {
       nextMode =
         (modes.includes('big_game') && 'big_game') ||
@@ -149,6 +151,7 @@ export default function Home() {
 
       if (nextMode !== current.mode) {
         setCurrent(prev => ({ ...prev, mode: nextMode, filterType: 'all', filterValue: null }));
+        return; // let next render recalc with corrected mode
       }
     }
 
@@ -197,6 +200,7 @@ export default function Home() {
         showWeeks={showWeeks}
         setShowWeeks={setShowWeeks}
       />
+
       <div className="max-w-7xl mx-auto p-6">
         <div className="mb-6 text-center">
           <h1 className="text-4xl font-bold text-indigo-500">
