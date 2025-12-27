@@ -33,6 +33,9 @@ function inGameWindow() {
   // Thursday night: 19:00–23:59
   if (day === 4 && hour >= 19 && hour < 24) return true;
 
+  // Saturday night: 13:00–23:59
+  if (day === 6 && hour >= 13 && hour < 24) return true;
+
   return false;
 }
 
