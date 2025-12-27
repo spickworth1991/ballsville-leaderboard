@@ -275,7 +275,7 @@ const LEAGUE_MAP = {
     dynasty: {
       name: "2025 Dynasty",
       divisions: {
-        "Dragons of Dynasty": [
+        "Heroes of Dynasty": [
           "1211843117481730048",
           "1211843011340668928",
           "1211842907326136320",
@@ -294,7 +294,7 @@ const LEAGUE_MAP = {
           "1189763535369687040",
           ],
 
-        "Heroes of Dynasty": [
+        "Dragons of Dynasty": [
           "1183218710324412416",
           "1183216824196034560",
           "1183215347088457728",
