@@ -6,8 +6,8 @@ import { useEffect, useState } from 'react';
 // Jan/Feb are still the prior season (playoffs/SB).
 function getNflSeasonYear(d = new Date()) {
   const y = d.getFullYear();
-  const m = d.getMonth(); // 0=Jan, 1=Feb, ...
-  return m <= 1 ? y - 1 : y;
+  const m = d.getMonth() + 1; // 0=Jan, 1=Feb, ...
+  return m <= 2 ? y - 1 : y;
 }
 
 /**
@@ -16,7 +16,7 @@ function getNflSeasonYear(d = new Date()) {
  */
 export default function useAvailableYears({
   startYear = getNflSeasonYear(),
-  maxYearsBack = 6,
+  maxYearsBack = 3,
   pollMs = null,
   basePath = '/data',
 } = {}) {
