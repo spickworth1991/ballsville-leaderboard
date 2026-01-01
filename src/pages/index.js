@@ -6,9 +6,10 @@ import Leaderboard from '../components/Leaderboard';
 import useR2Live from '../hooks/useR2Live';
 import useAvailableYears from '../hooks/useAvailableYears';
 import { LeaderboardProvider } from '../context/LeaderboardContext';
+import  CURRENT_SEASON  from '../hooks/season';
 
 const BASE_PATH = '/data'; // must match your Cloudflare route to R2
-const CURRENT_YEAR = String(new Date().getFullYear());
+const CURRENT_YEAR = CURRENT_SEASON
 
 function formatET(iso) {
   try {
