@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "update": "node script/generate-leaderboards.js",
-    "git": "git add . && git commit -m 'sched' && git push origin main"
+    "git": "git add . && git commit -m 'sched' && git push origin feat/per-year-files"
   },
   "dependencies": {
     "autoprefixer": "^10.4.14",
