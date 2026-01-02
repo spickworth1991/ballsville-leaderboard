@@ -18,7 +18,7 @@ function getCurrentSeason(d = new Date()) {
 // Convenience constant for client components.
 const CURRENT_SEASON = getCurrentSeason();
 
-
+console.log("getCurrentSeason:", CURRENT_SEASON);
 
 /** =================== CONSTANTS =================== */
 const CONCURRENCY = 5;
@@ -587,9 +587,7 @@ if (typeof LEAGUE_MAP === "undefined") {
 
 /** =================== HELPERS =================== */
 // Optional env overrides for CI / automation
-const ENV_YEARS = process.env.LEADERBOARD_YEARS
-  ? process.env.LEADERBOARD_YEARS.split(",").map(s => s.trim()).filter(Boolean)
-  : null;
+const ENV_YEARS = CURRENT_SEASON
 
 // If unset, we'll default to true in CI mode
 const ENV_USE_CACHED_PLAYERS = process.env.USE_CACHED_PLAYERS;
