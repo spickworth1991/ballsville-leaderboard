@@ -18,7 +18,7 @@ function getCurrentSeason(d = new Date()) {
 // Convenience constant for client components.
 const CURRENT_SEASON = getCurrentSeason();
 
-console.log("getCurrentSeason:", CURRENT_SEASON);
+
 
 /** =================== CONSTANTS =================== */
 const CONCURRENCY = 5;
@@ -999,7 +999,7 @@ async function main() {
 
   // 🔹 Non-interactive mode for CI / automation
   if (ENV_YEARS && ENV_YEARS.length) {
-    SELECTED_YEARS = CURRENT_SEASON;
+    SELECTED_YEARS = CURRENT_YEAR;
     // default to true if not explicitly set
     USE_CACHED_PLAYERS =
       ENV_USE_CACHED_PLAYERS === undefined
@@ -1007,7 +1007,7 @@ async function main() {
         : ENV_USE_CACHED_PLAYERS === "true";
 
     console.log(
-      `⚙️  Non-interactive mode: years = ${SELECTED_YEARS.join(
+      `⚙️  Non-interactive mode: years = ${SELECTED_YEARS}(
         ", "
       )}, useCachedPlayers = ${USE_CACHED_PLAYERS}`
     );
