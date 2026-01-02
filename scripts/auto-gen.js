@@ -11,6 +11,59 @@ const RETRIES = 3;
 const MAX_WEEKS = 18;
 const CURRENT_YEAR = String(new Date().getFullYear());
 
+// ===== League-name sorting (manifests) =====
+// The weekly manifest is re-used by the UI and downstream tooling.
+// For certain categories we can sort leagues more consistently by parsing the
+// league name prefixes you standardize on.
+//
+// - big_game: league names start with (D8L1) or D9L1 ... sort by D then L
+// - mini_game: league names start with 101-110, 201-210, ... sort by leading number
+// - redraft: league names start with #1, #2, ... sort by leading number
+function getLeagueSortTuple(categoryKey, leagueName) {
+  const name = String(leagueName || "").trim();
+
+  if (categoryKey === "big_game") {
+    const m = name.match(/^\s*\(?\s*D(\d+)\s*L(\d+)\s*\)?/i);
+    if (m) return [0, Number(m[1]), Number(m[2]), name.toLowerCase()];
+  }
+
+  if (categoryKey === "mini_game") {
+    const m = name.match(/^\s*\(?\s*(\d{3,})/);
+    if (m) return [0, Number(m[1]), 0, name.toLowerCase()];
+  }
+
+  if (categoryKey === "redraft") {
+    const m = name.match(/^\s*#\s*(\d+)/);
+    if (m) return [0, Number(m[1]), 0, name.toLowerCase()];
+  }
+
+  // fallback: alphabetical, but after any parsed names
+  return [1, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, name.toLowerCase()];
+}
+
+function sortLeagueNames(categoryKey, names) {
+  return (names || []).slice().sort((a, b) => {
+    const ta = getLeagueSortTuple(categoryKey, a);
+    const tb = getLeagueSortTuple(categoryKey, b);
+    // lexicographic compare of tuple
+    for (let i = 0; i < Math.max(ta.length, tb.length); i++) {
+      const va = ta[i];
+      const vb = tb[i];
+      if (va < vb) return -1;
+      if (va > vb) return 1;
+    }
+    return 0;
+  });
+}
+
+function getDivisionSortTuple(categoryKey, leagueNames) {
+  const sorted = sortLeagueNames(categoryKey, leagueNames || []);
+  const first = sorted[0];
+  const tup = getLeagueSortTuple(categoryKey, first);
+  // Use the same primary numeric cue as leagues, but keep a fallback
+  return tup;
+}
+
 
 const BACKUP_DIR = "auto";        // outputs go here
 const PLAYER_FILE = path.join(BACKUP_DIR, "sleeper_players.json");
@@ -1026,12 +1079,28 @@ async function main() {
         .map(Number)
         .sort((a, b) => a - b);
 
+      // Sort leagues/divisions for categories where the league naming convention
+      // encodes a stable order (Big Game, Mini Game, Redraft).
+      const divisionsRaw = Object.keys(details.divisions);
+      const sortedDivisions = divisionsRaw.slice().sort((a, b) => {
+        const ta = getDivisionSortTuple(category, leagueNamesByDivision[a] || []);
+        const tb = getDivisionSortTuple(category, leagueNamesByDivision[b] || []);
+        const cmp = cmpTuple(ta, tb);
+        if (cmp !== 0) return cmp;
+        return String(a).localeCompare(String(b));
+      });
+
+      const sortedLeaguesByDivision = {};
+      for (const d of sortedDivisions) {
+        sortedLeaguesByDivision[d] = sortLeagueNames(category, leagueNamesByDivision[d] || []);
+      }
+
       const catPayload = {
         name: details.name,
         weeks,
         owners: allResults,
-        divisions: Object.keys(details.divisions),
-        leaguesByDivision: leagueNamesByDivision,
+        divisions: sortedDivisions,
+        leaguesByDivision: sortedLeaguesByDivision,
       };
 
       if (String(year) === CURRENT_YEAR) {
