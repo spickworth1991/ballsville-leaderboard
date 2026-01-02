@@ -3,6 +3,19 @@
 // but ONLY during NFL game windows (Detroit time). It also writes a flag
 // file when it actually runs, so GitHub Actions can decide whether to upload.
 
+function getCurrentSeason(d = new Date()) {
+  const dt = d instanceof Date ? d : new Date(d);
+  const y = dt.getFullYear();
+  const m = dt.getMonth() + 1; // 1-12
+
+  // Jan + Feb are still considered the previous season year.
+  // March and later count as the new season year.
+  return m <= 2 ? y - 1 : y;
+}
+
+// Convenience constant for client components.
+const CURRENT_SEASON = getCurrentSeason();
+
 const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
@@ -60,7 +73,7 @@ if (FORCE_RUN) {
 }
 
 
-const year = new Date().getFullYear().toString();
+const year = CURRENT_SEASON;
 console.log(
   `🏈 In NFL game window – auto-generating leaderboards for year ${year}...`
 );
