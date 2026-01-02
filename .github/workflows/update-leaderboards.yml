@@ -1,11 +1,8 @@
-name: Update leaderboards (current year)
+name: Update leaderboards (current season)
 
 on:
-  # 🔁 Runs automatically – change cron to whatever schedule you want
   schedule:
-    - cron: "*/10 * * * *"  # Every 10 minutes, all days
-
-  # 🔘 Manual run button in GitHub UI
+    - cron: "*/10 * * * *"
   workflow_dispatch:
     inputs:
       force_run:
@@ -29,26 +26,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # ✅ Use the same CURRENT_SEASON logic as your app:
-      # Jan/Feb => previous year, March+ => current year
-      - name: Compute CURRENT_SEASON
-        run: |
-          YEAR=$(node -e "const d=new Date(); const y=d.getFullYear(); const m=d.getMonth()+1; process.stdout.write(String(m<=2?y-1:y));")
-          echo "YEAR=$YEAR" >> $GITHUB_ENV
-          echo "Computed CURRENT_SEASON=$YEAR"
-
-      - name: Generate current-year leaderboard JSON
+      - name: Generate leaderboard JSON (auto CURRENT_SEASON)
         env:
           USE_CACHED_PLAYERS: "true"
-          # Will be "true" or "false" (string) when manually triggered,
-          # and empty on cron → sched.js treats empty as false.
           FORCE_RUN: ${{ github.event.inputs.force_run || 'false' }}
         run: |
-          echo "Generating leaderboards for season ${YEAR}"
-          export LEADERBOARD_YEARS="${YEAR}"
           node scripts/sched.js
 
-      - name: Upload JSONs to R2 (current year + aliases)
+      - name: Upload JSONs to R2 (current season + aliases)
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
@@ -58,50 +43,31 @@ jobs:
         run: |
           set -e
 
-          # If auto-gen didn't actually run (outside game window),
-          # the flag file won't exist – skip upload cleanly.
           if [ ! -f ".leaderboard_update_done" ]; then
             echo "ℹ️ No leaderboard update this run (outside NFL window) – skipping R2 upload."
             exit 0
           fi
 
+          # Read CURRENT_SEASON from Node (same logic as auto-gen.js)
+          YEAR=$(node -e "const d=new Date(); const y=d.getFullYear(); const m=d.getMonth()+1; process.stdout.write(String(m<=2?y-1:y));")
+          echo "Uploading for CURRENT_SEASON=${YEAR}"
+
           ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 
-          echo "Uploading leaderboards_${YEAR}.json..."
-          aws s3 cp "auto/leaderboards_${YEAR}.json" \
-            "s3://${R2_BUCKET}/leaderboards_${YEAR}.json" \
-            --endpoint-url "$ENDPOINT"
+          aws s3 cp "auto/leaderboards_${YEAR}.json" "s3://${R2_BUCKET}/leaderboards_${YEAR}.json" --endpoint-url "$ENDPOINT"
+          aws s3 cp "auto/leaderboards_${YEAR}.json" "s3://${R2_BUCKET}/leaderboards.json"       --endpoint-url "$ENDPOINT"
 
-          # Alias: keep your existing frontend path /data/leaderboards.json
-          aws s3 cp "auto/leaderboards_${YEAR}.json" \
-            "s3://${R2_BUCKET}/leaderboards.json" \
-            --endpoint-url "$ENDPOINT"
+          aws s3 cp "auto/weekly_manifest_${YEAR}.json" "s3://${R2_BUCKET}/weekly_manifest_${YEAR}.json" --endpoint-url "$ENDPOINT"
+          aws s3 cp "auto/weekly_manifest_${YEAR}.json" "s3://${R2_BUCKET}/weekly_manifest.json"        --endpoint-url "$ENDPOINT"
 
-          echo "Uploading weekly_manifest_${YEAR}.json..."
-          aws s3 cp "auto/weekly_manifest_${YEAR}.json" \
-            "s3://${R2_BUCKET}/weekly_manifest_${YEAR}.json" \
-            --endpoint-url "$ENDPOINT"
-
-          # Alias: /data/weekly_manifest.json
-          aws s3 cp "auto/weekly_manifest_${YEAR}.json" \
-            "s3://${R2_BUCKET}/weekly_manifest.json" \
-            --endpoint-url "$ENDPOINT"
-
-          echo "Uploading weekly rosters parts for ${YEAR}..."
           for f in auto/weekly_rosters_${YEAR}_part*.json; do
             [ -e "$f" ] || continue
             base=$(basename "$f")
 
-            echo "  -> ${base}"
-            aws s3 cp "$f" \
-              "s3://${R2_BUCKET}/${base}" \
-              --endpoint-url "$ENDPOINT"
+            aws s3 cp "$f" "s3://${R2_BUCKET}/${base}" --endpoint-url "$ENDPOINT"
 
-            # Alias: /data/weekly_rosters_partN.json
             short_name="${base/weekly_rosters_${YEAR}_/weekly_rosters_}"
-            aws s3 cp "$f" \
-              "s3://${R2_BUCKET}/${short_name}" \
-              --endpoint-url "$ENDPOINT"
+            aws s3 cp "$f" "s3://${R2_BUCKET}/${short_name}" --endpoint-url "$ENDPOINT"
           done
 
           echo "✅ R2 upload complete."
