@@ -2,6 +2,7 @@ import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Leaderboard from "../../components/Leaderboard";
+import { CURRENT_SEASON } from "../../lib/season";
 
 export default function LeaguePage() {
   const router = useRouter();
@@ -9,9 +10,9 @@ export default function LeaguePage() {
   const [data, setData] = useState(null);
 
   useEffect(() => {
-  fetch("/data/leaderboard.json", { cache: 'no-store' })
-    .then(res => res.json())
-    .then(json => setData(json));
+    fetch(`/data/leaderboards_${CURRENT_SEASON}.json`, { cache: "no-store" })
+      .then((res) => res.json())
+      .then((json) => setData(json));
   }, [league]);
 
   if (!data) return <div className="text-center text-white mt-10">Loading...</div>;

@@ -1,13 +1,14 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { CURRENT_SEASON } from "../../lib/season";
 
 export default function LeaguesHome() {
   const [data, setData] = useState(null);
 
   useEffect(() => {
-  fetch("/data/leaderboard.json", { cache: 'no-store' })
-    .then(res => res.json())
-    .then(json => setData(json));
+    fetch(`/data/leaderboards_${CURRENT_SEASON}.json`, { cache: "no-store" })
+      .then((res) => res.json())
+      .then((json) => setData(json));
   }, []);
 
   if (!data) return <div className="text-white text-center mt-10">Loading...</div>;
