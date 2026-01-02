@@ -5,26 +5,21 @@ import axios from "axios";
 import pLimit from "p-limit";
 import prompts from "prompts";
 
+// NFL season year helper:
+// Jan/Feb still count as previous season; March+ counts as the new season year.
 function getCurrentSeason(d = new Date()) {
   const dt = d instanceof Date ? d : new Date(d);
   const y = dt.getFullYear();
   const m = dt.getMonth() + 1; // 1-12
-
-  // Jan + Feb are still considered the previous season year.
-  // March and later count as the new season year.
   return m <= 2 ? y - 1 : y;
 }
-
-// Convenience constant for client components.
-const CURRENT_SEASON = getCurrentSeason();
-
-
 
 /** =================== CONSTANTS =================== */
 const CONCURRENCY = 5;
 const RETRIES = 3;
 const MAX_WEEKS = 18;
-const CURRENT_YEAR = CURRENT_SEASON
+// "current year" here means the current NFL season, not calendar year.
+const CURRENT_YEAR = String(getCurrentSeason());
 
 
 const BACKUP_DIR = "auto";        // outputs go here
@@ -586,26 +581,13 @@ if (typeof LEAGUE_MAP === "undefined") {
 }
 
 /** =================== HELPERS =================== */
-// Optional env override (ONLY as an override; normal behavior is automatic)
-const ENV_YEARS_RAW = String(process.env.LEADERBOARD_YEARS || "").trim();
-const ENV_YEARS = ENV_YEARS_RAW
-  ? ENV_YEARS_RAW.split(",").map(s => s.trim()).filter(Boolean)
+// Optional env overrides for CI / automation
+const ENV_YEARS = process.env.LEADERBOARD_YEARS
+  ? process.env.LEADERBOARD_YEARS.split(",").map(s => s.trim()).filter(Boolean)
   : null;
 
 // If unset, we'll default to true in CI mode
 const ENV_USE_CACHED_PLAYERS = process.env.USE_CACHED_PLAYERS;
-
-// Helper: compute the 4 "local default" years = current season + 3 back
-function defaultLocalYears() {
-  const y = Number(CURRENT_SEASON);
-  return [y, y - 1, y - 2, y - 3].map(String);
-}
-
-// Helper: filter a candidate list to only years that exist in LEAGUE_MAP
-function onlyYearsThatExist(years) {
-  return (years || []).filter((y) => Object.prototype.hasOwnProperty.call(LEAGUE_MAP, String(y)));
-}
-
 
 // ---- BEST BALL HELPERS -------------------------------------------------
 const normId = (x) => (x == null ? null : String(x).trim());
@@ -719,25 +701,22 @@ function mergeDeep(target, src) {
   return out;
 }
 
-// ============== Division league-name sorting (manifest) ==============
+// ============== Stable division/league sorting for manifests ==============
 // Ensures downstream UIs get consistent ordering without doing extra work at runtime.
-//
 // Patterns:
-// - Big Game: (D8L1) or D9L1 (parens optional)
+// - Big Game: D8L1 or (D9L12) (parens optional)
 // - Mini Leagues: 101-110, 201-210, ... (hundreds digit => division, remainder => league)
 // - Redraft: #1, #2, ...
 function leagueSortKey(leagueName) {
   const s = String(leagueName || "").trim();
 
-  // Big Game: D8L1, (D9L12), etc.
-  // Capture D and L numeric parts.
+  // Big Game: allow "D8L1" with optional parens and optional spaces.
   let m = s.match(/^\(?\s*D\s*(\d+)\s*L\s*(\d+)\s*\)?/i);
   if (m) {
     return { kind: 0, a: Number(m[1]) || 0, b: Number(m[2]) || 0, t: s.toLowerCase() };
   }
 
   // Mini Leagues: 101, 210, 305, ...
-  // Use hundreds digit as division, remainder as league.
   m = s.match(/^(\d{3})\b/);
   if (m) {
     const n = Number(m[1]);
@@ -1010,50 +989,41 @@ async function main() {
   let SELECTED_YEARS;
   let USE_CACHED_PLAYERS;
 
-    // ---- Automation defaults ----
-  // CI / scheduled runs: always run CURRENT_SEASON (no env needed).
-  // Manual override still possible via LEADERBOARD_YEARS.
-  const isCI = !!process.env.CI;
-
-  if (isCI) {
+  // 🔹 Non-interactive mode for CI / automation
+  if (ENV_YEARS && ENV_YEARS.length) {
+    SELECTED_YEARS = ENV_YEARS;
     // default to true if not explicitly set
     USE_CACHED_PLAYERS =
       ENV_USE_CACHED_PLAYERS === undefined
         ? true
         : ENV_USE_CACHED_PLAYERS === "true";
 
-    // If someone sets LEADERBOARD_YEARS, treat it as an explicit override.
-    // Otherwise: always use CURRENT_SEASON.
-    const years = ENV_YEARS && ENV_YEARS.length ? ENV_YEARS : [String(CURRENT_SEASON)];
-    SELECTED_YEARS = onlyYearsThatExist(years);
-
-    if (!SELECTED_YEARS.length) {
-      console.error(
-        `❌ CI mode: No valid years to run. Requested=${JSON.stringify(years)}; CURRENT_SEASON=${CURRENT_SEASON}; LEAGUE_MAP keys=${Object.keys(
-          LEAGUE_MAP
-        ).join(", ")}`
-      );
-      process.exit(1);
-    }
-
     console.log(
-      `⚙️  CI mode: years = ${SELECTED_YEARS.join(", ")}, useCachedPlayers = ${USE_CACHED_PLAYERS}`
+      `⚙️  Non-interactive mode: years = ${SELECTED_YEARS.join(
+        ", "
+      )}, useCachedPlayers = ${USE_CACHED_PLAYERS}`
     );
   } else {
-    // ---- Local interactive defaults ----
-    // Show only CURRENT_SEASON and 3 years back (if they exist in LEAGUE_MAP)
-    const defaultYears = onlyYearsThatExist(defaultLocalYears());
+    // 🔹 Local interactive mode: default to "current season + 3 back".
+    // This keeps the prompt clean while still letting you add more years to LEAGUE_MAP later.
+    const defaultYears = [
+      String(getCurrentSeason()),
+      String(getCurrentSeason() - 1),
+      String(getCurrentSeason() - 2),
+      String(getCurrentSeason() - 3),
+    ];
 
-    // If you *want* to allow selecting beyond those in the future, you can expand,
-    // but per your request: keep it tight and simple.
-    const yearChoices = defaultYears.map((y) => ({ title: y, value: y }));
+    const availableYears = Object.keys(LEAGUE_MAP).map(String);
+    const narrowed = defaultYears.filter((y) => availableYears.includes(y));
+    const yearsForPrompt = narrowed.length ? narrowed : availableYears;
 
-    if (!yearChoices.length) {
-      console.error(
-        `❌ No selectable years found in LEAGUE_MAP for CURRENT_SEASON window. CURRENT_SEASON=${CURRENT_SEASON}`
-      );
-      process.exit(1);
-    }
+    const yearChoices = yearsForPrompt
+      .slice()
+      .sort()
+      .map((y) => ({ title: y, value: y }));
+
+    // Select all shown years by default
+    const initialYears = yearChoices.map((_, i) => i);
 
     const ans = await prompts(
       [
@@ -1063,8 +1033,7 @@ async function main() {
           message: "Select year(s) to update",
           hint: "Space = toggle, Enter = confirm",
           choices: yearChoices,
-          // Preselect all four (current + 3 back) to match your “set current year and 3 years back” ask
-          initial: yearChoices.map((_, i) => i),
+          initial: initialYears,
           validate: (v) => (v.length ? true : "Pick at least one year"),
         },
         {
@@ -1087,7 +1056,6 @@ async function main() {
     SELECTED_YEARS = ans.years;
     USE_CACHED_PLAYERS = ans.useCachedPlayers;
   }
-
 
   const playersDB = await getSleeperPlayers(USE_CACHED_PLAYERS);
 
@@ -1131,9 +1099,31 @@ async function main() {
         );
       }
 
-      // Ensure a stable, useful ordering for league lists inside divisions.
-      // (Big Game: D#L#, Mini Leagues: 101/201..., Redraft: #1/#2...)
+      // ✅ Stable ordering for league lists inside divisions.
+      // (Big Game: D#L#, Mini: 101/201..., Redraft: #1/#2...)
       sortLeagueNamesInDivisions(leagueNamesByDivision);
+
+      // ✅ Stable ordering for the owners list (prevents "random" ordering due to concurrency).
+      const divisionOrder = Object.keys(details.divisions || {});
+      const divisionIndex = new Map(divisionOrder.map((d, i) => [d, i]));
+      allResults.sort((a, b) => {
+        const da = divisionIndex.has(a.division) ? divisionIndex.get(a.division) : 999;
+        const db = divisionIndex.has(b.division) ? divisionIndex.get(b.division) : 999;
+        if (da !== db) return da - db;
+
+        const ka = leagueSortKey(a.leagueName);
+        const kb = leagueSortKey(b.leagueName);
+        if (ka.kind !== kb.kind) return ka.kind - kb.kind;
+        if (ka.a !== kb.a) return ka.a - kb.a;
+        if (ka.b !== kb.b) return ka.b - kb.b;
+        if (ka.t !== kb.t) return ka.t.localeCompare(kb.t);
+
+        const ta = Number(a.total || 0);
+        const tb = Number(b.total || 0);
+        if (ta !== tb) return tb - ta; // total desc
+
+        return String(a.ownerName || "").localeCompare(String(b.ownerName || ""));
+      });
 
       const weeks = [
         ...new Set(allResults.flatMap((o) => Object.keys(o.weekly))),
@@ -1149,7 +1139,7 @@ async function main() {
         leaguesByDivision: leagueNamesByDivision,
       };
 
-      if (String(year) === String(CURRENT_YEAR)) {
+      if (String(year) === CURRENT_YEAR) {
         catPayload.updatedAt = new Date().toISOString();
       }
 
