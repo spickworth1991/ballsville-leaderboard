@@ -29,6 +29,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # ✅ Use the same CURRENT_SEASON logic as your app:
+      # Jan/Feb => previous year, March+ => current year
+      - name: Compute CURRENT_SEASON
+        run: |
+          YEAR=$(node -e "const d=new Date(); const y=d.getFullYear(); const m=d.getMonth()+1; process.stdout.write(String(m<=2?y-1:y));")
+          echo "YEAR=$YEAR" >> $GITHUB_ENV
+          echo "Computed CURRENT_SEASON=$YEAR"
+
       - name: Generate current-year leaderboard JSON
         env:
           USE_CACHED_PLAYERS: "true"
@@ -36,8 +44,7 @@ jobs:
           # and empty on cron → sched.js treats empty as false.
           FORCE_RUN: ${{ github.event.inputs.force_run || 'false' }}
         run: |
-          YEAR=$(date +'%Y')
-          echo "Generating leaderboards for year ${YEAR}"
+          echo "Generating leaderboards for season ${YEAR}"
           export LEADERBOARD_YEARS="${YEAR}"
           node scripts/sched.js
 
@@ -58,7 +65,6 @@ jobs:
             exit 0
           fi
 
-          YEAR=$(date +'%Y')
           ENDPOINT="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
 
           echo "Uploading leaderboards_${YEAR}.json..."
