@@ -586,13 +586,26 @@ if (typeof LEAGUE_MAP === "undefined") {
 }
 
 /** =================== HELPERS =================== */
-// Optional env overrides for CI / automation
-const ENV_YEARS = process.env.LEADERBOARD_YEARS
-  ? process.env.LEADERBOARD_YEARS.split(",").map(s => s.trim()).filter(Boolean)
+// Optional env override (ONLY as an override; normal behavior is automatic)
+const ENV_YEARS_RAW = String(process.env.LEADERBOARD_YEARS || "").trim();
+const ENV_YEARS = ENV_YEARS_RAW
+  ? ENV_YEARS_RAW.split(",").map(s => s.trim()).filter(Boolean)
   : null;
 
 // If unset, we'll default to true in CI mode
 const ENV_USE_CACHED_PLAYERS = process.env.USE_CACHED_PLAYERS;
+
+// Helper: compute the 4 "local default" years = current season + 3 back
+function defaultLocalYears() {
+  const y = Number(CURRENT_SEASON);
+  return [y, y - 1, y - 2, y - 3].map(String);
+}
+
+// Helper: filter a candidate list to only years that exist in LEAGUE_MAP
+function onlyYearsThatExist(years) {
+  return (years || []).filter((y) => Object.prototype.hasOwnProperty.call(LEAGUE_MAP, String(y)));
+}
+
 
 // ---- BEST BALL HELPERS -------------------------------------------------
 const normId = (x) => (x == null ? null : String(x).trim());
@@ -997,25 +1010,50 @@ async function main() {
   let SELECTED_YEARS;
   let USE_CACHED_PLAYERS;
 
-  // 🔹 Non-interactive mode for CI / automation
-  if (ENV_YEARS && ENV_YEARS.length) {
-    SELECTED_YEARS = CURRENT_YEAR;
+    // ---- Automation defaults ----
+  // CI / scheduled runs: always run CURRENT_SEASON (no env needed).
+  // Manual override still possible via LEADERBOARD_YEARS.
+  const isCI = !!process.env.CI;
+
+  if (isCI) {
     // default to true if not explicitly set
     USE_CACHED_PLAYERS =
       ENV_USE_CACHED_PLAYERS === undefined
         ? true
         : ENV_USE_CACHED_PLAYERS === "true";
 
+    // If someone sets LEADERBOARD_YEARS, treat it as an explicit override.
+    // Otherwise: always use CURRENT_SEASON.
+    const years = ENV_YEARS && ENV_YEARS.length ? ENV_YEARS : [String(CURRENT_SEASON)];
+    SELECTED_YEARS = onlyYearsThatExist(years);
+
+    if (!SELECTED_YEARS.length) {
+      console.error(
+        `❌ CI mode: No valid years to run. Requested=${JSON.stringify(years)}; CURRENT_SEASON=${CURRENT_SEASON}; LEAGUE_MAP keys=${Object.keys(
+          LEAGUE_MAP
+        ).join(", ")}`
+      );
+      process.exit(1);
+    }
+
     console.log(
-      `⚙️  Non-interactive mode: years = ${SELECTED_YEARS}(
-        ", "
-      )}, useCachedPlayers = ${USE_CACHED_PLAYERS}`
+      `⚙️  CI mode: years = ${SELECTED_YEARS.join(", ")}, useCachedPlayers = ${USE_CACHED_PLAYERS}`
     );
   } else {
-    // 🔹 Original interactive prompts (unchanged for local runs)
-    const yearChoices = Object.keys(LEAGUE_MAP)
-      .sort()
-      .map((y) => ({ title: y, value: y }));
+    // ---- Local interactive defaults ----
+    // Show only CURRENT_SEASON and 3 years back (if they exist in LEAGUE_MAP)
+    const defaultYears = onlyYearsThatExist(defaultLocalYears());
+
+    // If you *want* to allow selecting beyond those in the future, you can expand,
+    // but per your request: keep it tight and simple.
+    const yearChoices = defaultYears.map((y) => ({ title: y, value: y }));
+
+    if (!yearChoices.length) {
+      console.error(
+        `❌ No selectable years found in LEAGUE_MAP for CURRENT_SEASON window. CURRENT_SEASON=${CURRENT_SEASON}`
+      );
+      process.exit(1);
+    }
 
     const ans = await prompts(
       [
@@ -1025,6 +1063,8 @@ async function main() {
           message: "Select year(s) to update",
           hint: "Space = toggle, Enter = confirm",
           choices: yearChoices,
+          // Preselect all four (current + 3 back) to match your “set current year and 3 years back” ask
+          initial: yearChoices.map((_, i) => i),
           validate: (v) => (v.length ? true : "Pick at least one year"),
         },
         {
@@ -1047,6 +1087,7 @@ async function main() {
     SELECTED_YEARS = ans.years;
     USE_CACHED_PLAYERS = ans.useCachedPlayers;
   }
+
 
   const playersDB = await getSleeperPlayers(USE_CACHED_PLAYERS);
 
@@ -1108,7 +1149,7 @@ async function main() {
         leaguesByDivision: leagueNamesByDivision,
       };
 
-      if (String(year) === CURRENT_YEAR) {
+      if (String(year) === String(CURRENT_YEAR)) {
         catPayload.updatedAt = new Date().toISOString();
       }
 
