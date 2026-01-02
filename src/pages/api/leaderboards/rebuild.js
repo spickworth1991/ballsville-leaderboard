@@ -1,15 +1,17 @@
-/**
- * Cloudflare Pages Function:
- *   cron-job.org  →  this function  →  GitHub workflow_dispatch  →  scripts/sched.js
- *
- * Purpose: avoid relying on GitHub's scheduled cron timing; let an external cron ping this endpoint.
- *
- * Env vars (set in Cloudflare project settings):
- *   - GITHUB_REPO                 e.g. "spickworth1991/ballsville-leaderboard"
- *   - LEADERBOARDS_WORKFLOW_FILE  e.g. "update-leaderboards.yml"
- *   - LEADERBOARDS_REF            e.g. "main" (optional, defaults to "main")
- *   - GH_WORKFLOW_TOKEN           PAT with "repo" + "workflow" scopes
- */
+// Edge API route:
+//   cron-job.org → /api/leaderboards/rebuild → GitHub workflow_dispatch → scripts/sched.js
+//
+// Env vars (Cloudflare Pages project settings / wrangler.toml):
+//   - GITHUB_REPO                 e.g. "spickworth1991/ballsville-leaderboard"
+//   - LEADERBOARDS_WORKFLOW_FILE  e.g. "update-leaderboards.yml"
+//   - LEADERBOARDS_REF            e.g. "main" (optional, defaults to "main")
+//   - GH_WORKFLOW_TOKEN           PAT with repo + workflow scopes
+
+import { getRequestContext } from "@cloudflare/next-on-pages";
+
+export const config = {
+  runtime: "edge",
+};
 
 const GAME_TZ = "America/Detroit";
 
@@ -78,7 +80,7 @@ async function triggerGithubWorkflow(env, { forceRun }) {
       Accept: "application/vnd.github+json",
       "X-GitHub-Api-Version": "2022-11-28",
       "Content-Type": "application/json",
-      "User-Agent": "ballsville-leaderboards-cf-function",
+      "User-Agent": "ballsville-leaderboards-edge-route",
     },
     body: JSON.stringify(body),
   });
@@ -91,53 +93,57 @@ async function triggerGithubWorkflow(env, { forceRun }) {
   return { repo, workflowFile, ref, inputs: body.inputs };
 }
 
-export async function onRequestPost(context) {
-  const { request, env } = context;
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data, null, 2), {
+    status,
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
+}
+
+export default async function handler(req) {
+  const { env } = getRequestContext();
+  const url = new URL(req.url);
+  const force = url.searchParams.get("force") === "1";
+
+  // GET sanity check
+  if (req.method === "GET") {
+    return json({
+      ok: true,
+      message:
+        "POST here to trigger the Leaderboards GitHub workflow. Use ?force=1 to ignore game-time checks.",
+      inGameWindow: isGameWindow(),
+    });
+  }
+
+  if (req.method !== "POST") {
+    return json({ ok: false, error: "Method Not Allowed" }, 405);
+  }
 
   try {
-    const url = new URL(request.url);
-    const force = url.searchParams.get("force") === "1";
-
     // ⏱ Respect game window unless forced
     if (!force && !isGameWindow()) {
-      return new Response(
-        JSON.stringify({
-          ok: true,
-          triggered: false,
-          skipped: true,
-          reason: "outside_game_window",
-        }),
-        { status: 200, headers: { "Content-Type": "application/json" } }
-      );
+      return json({
+        ok: true,
+        triggered: false,
+        skipped: true,
+        reason: "outside_game_window",
+      });
     }
 
     const info = await triggerGithubWorkflow(env, { forceRun: force });
-
-    return new Response(
-      JSON.stringify({ ok: true, triggered: true, skipped: false, workflow: info }),
-      { status: 200, headers: { "Content-Type": "application/json" } }
-    );
+    return json({ ok: true, triggered: true, skipped: false, workflow: info });
   } catch (err) {
-    return new Response(
-      JSON.stringify({
+    return json(
+      {
         ok: false,
         triggered: false,
         skipped: false,
         error: err?.message || "Unknown error",
-      }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
+      },
+      500
     );
   }
-}
-
-// Optional GET sanity check
-export async function onRequestGet() {
-  return new Response(
-    JSON.stringify({
-      ok: true,
-      message:
-        "POST here to trigger the Leaderboards GitHub workflow. Use ?force=1 to ignore game-time checks.",
-    }),
-    { status: 200, headers: { "Content-Type": "application/json" } }
-  );
 }

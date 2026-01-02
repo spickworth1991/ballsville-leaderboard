@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { CURRENT_SEASON } from "../../lib/season";
 
 export default function DivisionsHome() {
   const [data, setData] = useState(null);
 
   useEffect(() => {
-    fetch("/data/leaderboard.json", { cache: 'no-store' })
+    fetch(`/data/leaderboards_${CURRENT_SEASON}.json`, { cache: "no-store" })
       .then(res => res.json())
       .then(json => setData(json));
   }, []);

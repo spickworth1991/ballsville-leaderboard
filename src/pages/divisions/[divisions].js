@@ -2,6 +2,7 @@ import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Leaderboard from "../../components/Leaderboard";
+import { CURRENT_SEASON } from "../../lib/season";
 
 export default function DivisionPage() {
   const router = useRouter();
@@ -11,7 +12,7 @@ export default function DivisionPage() {
   useEffect(() => {
     if (!router.isReady) return;
 
-    fetch("/data/leaderboard.json", { cache: 'no-store' })
+    fetch(`/data/leaderboards_${CURRENT_SEASON}.json`, { cache: "no-store" })
     .then(res => res.json())
     .then(json => {
         const divisionName = decodeURIComponent(divisions || "");
