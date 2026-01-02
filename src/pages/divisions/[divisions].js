@@ -2,7 +2,7 @@ import { useRouter } from "next/router";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import Leaderboard from "../../components/Leaderboard";
-import { CURRENT_SEASON } from "../../lib/season";
+import { CURRENT_SEASON } from "../../hooks/season";
 
 export default function DivisionPage() {
   const router = useRouter();

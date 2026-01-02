@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { CURRENT_SEASON } from "../../lib/season";
+import { CURRENT_SEASON } from "../../hooks/season";
 
 export default function LeaguesHome() {
   const [data, setData] = useState(null);
