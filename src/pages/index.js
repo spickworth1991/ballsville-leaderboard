@@ -53,7 +53,9 @@ export default function Home() {
   const [loadingYear, setLoadingYear] = useState(null);
 
   const [current, setCurrent] = useState({
-    year: String(new Date().getFullYear()),
+    // IMPORTANT: "year" is the NFL season year (like the schedule), not the calendar year.
+    // Example: in January/February 2026, the NFL season is still 2025.
+    year: String(CURRENT_SEASON),
     mode: 'big_game',
     filterType: 'all',
     filterValue: null,
