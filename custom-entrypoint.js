@@ -1,6 +1,6 @@
 // custom entry point
 import nextOnPagesHandler from "@cloudflare/next-on-pages/fetch-handler";
-import { handleRequest } from "__next-on-pages-dist__/functions-handler.js";
+import functionsHandler from "__next-on-pages-dist__/functions.js";
 
 // Shared headers
 const jsonHeaders = (extra = {}) => ({
@@ -100,7 +100,7 @@ export default {
 
     // ✅ Pages Functions (/api/*)
     if (pathname.startsWith("/api/")) {
-      return handleRequest(request, env, ctx);
+      return functionsHandler.fetch(request, env, ctx);
     }
 
     // 🔹 Everything else → Next.js
