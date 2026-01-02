@@ -1,5 +1,5 @@
 // scripts/sched.js
-// Wrapper to run auto-gen.js in "auto" mode for the current year,
+// Wrapper to run auto-gen.js in "auto" mode for the current season,
 // but ONLY during NFL game windows (Detroit time). It also writes a flag
 // file when it actually runs, so GitHub Actions can decide whether to upload.
 
@@ -7,63 +7,70 @@ function getCurrentSeason(d = new Date()) {
   const dt = d instanceof Date ? d : new Date(d);
   const y = dt.getFullYear();
   const m = dt.getMonth() + 1; // 1-12
-
-  // Jan + Feb are still considered the previous season year.
-  // March and later count as the new season year.
   return m <= 2 ? y - 1 : y;
 }
 
-// Convenience constant for client components.
 const CURRENT_SEASON = getCurrentSeason();
 
 const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
-const FORCE_RUN = process.env.FORCE_RUN === "true";
 
-
+const FORCE_RUN = String(process.env.FORCE_RUN || "").toLowerCase() === "true";
 const FLAG_PATH = path.join(__dirname, "..", ".leaderboard_update_done");
 
-function inGameWindow() {
-  const now = new Date();
+const GAME_TZ = "America/Detroit";
 
-  // Convert to America/Detroit local time (handles DST)
-  const detroitString = now.toLocaleString("en-US", {
-    timeZone: "America/Detroit",
+function getDetroitParts(now = new Date()) {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: GAME_TZ,
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
     hour12: false,
   });
-  const detroit = new Date(detroitString);
 
-  const day = detroit.getDay();    // 0 = Sun, 1 = Mon, ..., 4 = Thu
-  const hour = detroit.getHours(); // 0–23
+  const parts = fmt.formatToParts(now);
+  const weekday = parts.find((p) => p.type === "weekday")?.value; // "Sun", "Mon", ...
+  const hour = parseInt(parts.find((p) => p.type === "hour")?.value || "0", 10);
+  const minute = parseInt(parts.find((p) => p.type === "minute")?.value || "0", 10);
+  const time = hour + minute / 60; // decimal hour
+  return { weekday, hour, minute, time };
+}
 
-  // Sunday window: 12:00–23:59
-  if (day === 0 && hour >= 12 && hour < 24) return true;
+function inGameWindow(now = new Date()) {
+  const { weekday, time } = getDetroitParts(now);
 
-  // Monday night: 19:00–23:59
-  if (day === 1 && hour >= 19 && hour < 24) return true;
+  // Match the same philosophy you used on the CF function:
+  // - Sat: 16:30+
+  // - Sun: 12:30+
+  // - Mon: 19:00+
+  // - Thu: 19:00+
+  // - Spillover: 00:00–01:59 on Mon/Tue/Fri
+  if (weekday === "Sat" && time >= 16.5) return true;
+  if (weekday === "Sun" && time >= 12.5) return true;
+  if (weekday === "Mon" && time >= 19) return true;
+  if (weekday === "Thu" && time >= 19) return true;
 
-  // Thursday night: 19:00–23:59
-  if (day === 4 && hour >= 19 && hour < 24) return true;
-
-  // Saturday night: 13:00–23:59
-  if (day === 6 && hour >= 13 && hour < 24) return true;
+  // Early-morning spillover (00:00–01:59)
+  if ((weekday === "Mon" || weekday === "Tue" || weekday === "Fri") && time < 2) {
+    return true;
+  }
 
   return false;
 }
 
 // Always clear any stale flag at the start of a run
 try {
-  if (fs.existsSync(FLAG_PATH)) {
-    fs.unlinkSync(FLAG_PATH);
-  }
+  if (fs.existsSync(FLAG_PATH)) fs.unlinkSync(FLAG_PATH);
 } catch (_) {
   // ignore
 }
 
 if (!FORCE_RUN && !inGameWindow()) {
+  const p = getDetroitParts(new Date());
   console.log(
-    "⏱ Outside NFL game window (Detroit time) – skipping auto generation."
+    `⏱ Outside NFL game window (Detroit time). Now: ${p.weekday} ${String(Math.floor(p.time)).padStart(2, "0")}:${String(Math.round((p.time % 1) * 60)).padStart(2, "0")} – skipping auto generation.`
   );
   process.exit(0);
 }
@@ -72,11 +79,8 @@ if (FORCE_RUN) {
   console.log("⚡ FORCE_RUN enabled – ignoring NFL game window.");
 }
 
-
-const year = CURRENT_SEASON;
-console.log(
-  `🏈 In NFL game window – auto-generating leaderboards for year ${year}...`
-);
+const year = String(CURRENT_SEASON);
+console.log(`🏈 Running auto-gen for CURRENT_SEASON=${year}...`);
 
 const child = spawn("node", ["scripts/auto-gen.js"], {
   stdio: "inherit",
@@ -98,7 +102,6 @@ child.on("close", (code) => {
     fs.writeFileSync(FLAG_PATH, `updated ${year}\n`, "utf8");
   } catch (err) {
     console.error("⚠️ Could not write flag file:", err);
-    // still succeed, files are generated
   }
 
   console.log("✅ Auto generation complete.");
