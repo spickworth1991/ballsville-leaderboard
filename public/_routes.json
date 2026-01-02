@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "include": ["/*"],
+  "include": ["/api/*", "/*"],
   "exclude": [
     "/_next/static/*",
     "/static/*",
