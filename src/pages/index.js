@@ -6,10 +6,11 @@ import Leaderboard from '../components/Leaderboard';
 import useR2Live from '../hooks/useR2Live';
 import useAvailableYears from '../hooks/useAvailableYears';
 import { LeaderboardProvider } from '../context/LeaderboardContext';
-import  CURRENT_SEASON  from '../hooks/season';
+import { CURRENT_SEASON } from '../hooks/season';
 
 const BASE_PATH = '/data'; // must match your Cloudflare route to R2
-const CURRENT_YEAR = CURRENT_SEASON
+// NFL season year (not calendar year)
+const CURRENT_YEAR = CURRENT_SEASON;
 
 function formatET(iso) {
   try {
@@ -53,8 +54,7 @@ export default function Home() {
   const [loadingYear, setLoadingYear] = useState(null);
 
   const [current, setCurrent] = useState({
-    // IMPORTANT: "year" is the NFL season year (like the schedule), not the calendar year.
-    // Example: in January/February 2026, the NFL season is still 2025.
+    // Use NFL season year, not calendar year (prevents switching to next year on Jan 1).
     year: String(CURRENT_SEASON),
     mode: 'big_game',
     filterType: 'all',
