@@ -587,7 +587,9 @@ if (typeof LEAGUE_MAP === "undefined") {
 
 /** =================== HELPERS =================== */
 // Optional env overrides for CI / automation
-const ENV_YEARS = CURRENT_SEASON
+const ENV_YEARS = process.env.LEADERBOARD_YEARS
+  ? process.env.LEADERBOARD_YEARS.split(",").map(s => s.trim()).filter(Boolean)
+  : null;
 
 // If unset, we'll default to true in CI mode
 const ENV_USE_CACHED_PLAYERS = process.env.USE_CACHED_PLAYERS;
@@ -997,7 +999,7 @@ async function main() {
 
   // 🔹 Non-interactive mode for CI / automation
   if (ENV_YEARS && ENV_YEARS.length) {
-    SELECTED_YEARS = ENV_YEARS;
+    SELECTED_YEARS = CURRENT_SEASON;
     // default to true if not explicitly set
     USE_CACHED_PLAYERS =
       ENV_USE_CACHED_PLAYERS === undefined
