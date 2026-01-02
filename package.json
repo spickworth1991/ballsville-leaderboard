@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "update": "node script/generate-leaderboards.js",
+    "update": "node scripts/auto-gen.js",
     "git": "git add . && git commit -m 'sched' && git push origin feat/per-year-files"
   },
   "dependencies": {
