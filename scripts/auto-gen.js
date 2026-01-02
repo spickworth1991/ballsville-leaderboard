@@ -11,59 +11,6 @@ const RETRIES = 3;
 const MAX_WEEKS = 18;
 const CURRENT_YEAR = String(new Date().getFullYear());
 
-// ===== League-name sorting (manifests) =====
-// The weekly manifest is re-used by the UI and downstream tooling.
-// For certain categories we can sort leagues more consistently by parsing the
-// league name prefixes you standardize on.
-//
-// - big_game: league names start with (D8L1) or D9L1 ... sort by D then L
-// - mini_game: league names start with 101-110, 201-210, ... sort by leading number
-// - redraft: league names start with #1, #2, ... sort by leading number
-function getLeagueSortTuple(categoryKey, leagueName) {
-  const name = String(leagueName || "").trim();
-
-  if (categoryKey === "big_game") {
-    const m = name.match(/^\s*\(?\s*D(\d+)\s*L(\d+)\s*\)?/i);
-    if (m) return [0, Number(m[1]), Number(m[2]), name.toLowerCase()];
-  }
-
-  if (categoryKey === "mini_game") {
-    const m = name.match(/^\s*\(?\s*(\d{3,})/);
-    if (m) return [0, Number(m[1]), 0, name.toLowerCase()];
-  }
-
-  if (categoryKey === "redraft") {
-    const m = name.match(/^\s*#\s*(\d+)/);
-    if (m) return [0, Number(m[1]), 0, name.toLowerCase()];
-  }
-
-  // fallback: alphabetical, but after any parsed names
-  return [1, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, name.toLowerCase()];
-}
-
-function sortLeagueNames(categoryKey, names) {
-  return (names || []).slice().sort((a, b) => {
-    const ta = getLeagueSortTuple(categoryKey, a);
-    const tb = getLeagueSortTuple(categoryKey, b);
-    // lexicographic compare of tuple
-    for (let i = 0; i < Math.max(ta.length, tb.length); i++) {
-      const va = ta[i];
-      const vb = tb[i];
-      if (va < vb) return -1;
-      if (va > vb) return 1;
-    }
-    return 0;
-  });
-}
-
-function getDivisionSortTuple(categoryKey, leagueNames) {
-  const sorted = sortLeagueNames(categoryKey, leagueNames || []);
-  const first = sorted[0];
-  const tup = getLeagueSortTuple(categoryKey, first);
-  // Use the same primary numeric cue as leagues, but keep a fallback
-  return tup;
-}
-
 
 const BACKUP_DIR = "auto";        // outputs go here
 const PLAYER_FILE = path.join(BACKUP_DIR, "sleeper_players.json");
@@ -744,6 +691,61 @@ function mergeDeep(target, src) {
   return out;
 }
 
+// ============== Division league-name sorting (manifest) ==============
+// Ensures downstream UIs get consistent ordering without doing extra work at runtime.
+//
+// Patterns:
+// - Big Game: (D8L1) or D9L1 (parens optional)
+// - Mini Leagues: 101-110, 201-210, ... (hundreds digit => division, remainder => league)
+// - Redraft: #1, #2, ...
+function leagueSortKey(leagueName) {
+  const s = String(leagueName || "").trim();
+
+  // Big Game: D8L1, (D9L12), etc.
+  // Capture D and L numeric parts.
+  let m = s.match(/^\(?\s*D\s*(\d+)\s*L\s*(\d+)\s*\)?/i);
+  if (m) {
+    return { kind: 0, a: Number(m[1]) || 0, b: Number(m[2]) || 0, t: s.toLowerCase() };
+  }
+
+  // Mini Leagues: 101, 210, 305, ...
+  // Use hundreds digit as division, remainder as league.
+  m = s.match(/^(\d{3})\b/);
+  if (m) {
+    const n = Number(m[1]);
+    if (Number.isFinite(n)) {
+      const div = Math.floor(n / 100);
+      const lg = n % 100;
+      return { kind: 1, a: div, b: lg, t: s.toLowerCase() };
+    }
+  }
+
+  // Redraft: #1, #2, ...
+  m = s.match(/^#\s*(\d+)\b/);
+  if (m) {
+    return { kind: 2, a: Number(m[1]) || 0, b: 0, t: s.toLowerCase() };
+  }
+
+  // Fallback alphabetical
+  return { kind: 9, a: 0, b: 0, t: s.toLowerCase() };
+}
+
+function sortLeagueNamesInDivisions(leagueNamesByDivision) {
+  for (const div of Object.keys(leagueNamesByDivision || {})) {
+    const arr = Array.isArray(leagueNamesByDivision[div]) ? leagueNamesByDivision[div] : [];
+    arr.sort((a, b) => {
+      const ka = leagueSortKey(a);
+      const kb = leagueSortKey(b);
+      if (ka.kind !== kb.kind) return ka.kind - kb.kind;
+      if (ka.a !== kb.a) return ka.a - kb.a;
+      if (ka.b !== kb.b) return ka.b - kb.b;
+      return ka.t.localeCompare(kb.t);
+    });
+    leagueNamesByDivision[div] = arr;
+  }
+  return leagueNamesByDivision;
+}
+
 /** ============== Sleeper players DB ============== */
 async function getSleeperPlayers(useCached) {
   if (useCached && fs.existsSync(PLAYER_FILE)) {
@@ -1073,34 +1075,22 @@ async function main() {
         );
       }
 
+      // Ensure a stable, useful ordering for league lists inside divisions.
+      // (Big Game: D#L#, Mini Leagues: 101/201..., Redraft: #1/#2...)
+      sortLeagueNamesInDivisions(leagueNamesByDivision);
+
       const weeks = [
         ...new Set(allResults.flatMap((o) => Object.keys(o.weekly))),
       ]
         .map(Number)
         .sort((a, b) => a - b);
 
-      // Sort leagues/divisions for categories where the league naming convention
-      // encodes a stable order (Big Game, Mini Game, Redraft).
-      const divisionsRaw = Object.keys(details.divisions);
-      const sortedDivisions = divisionsRaw.slice().sort((a, b) => {
-        const ta = getDivisionSortTuple(category, leagueNamesByDivision[a] || []);
-        const tb = getDivisionSortTuple(category, leagueNamesByDivision[b] || []);
-        const cmp = cmpTuple(ta, tb);
-        if (cmp !== 0) return cmp;
-        return String(a).localeCompare(String(b));
-      });
-
-      const sortedLeaguesByDivision = {};
-      for (const d of sortedDivisions) {
-        sortedLeaguesByDivision[d] = sortLeagueNames(category, leagueNamesByDivision[d] || []);
-      }
-
       const catPayload = {
         name: details.name,
         weeks,
         owners: allResults,
-        divisions: sortedDivisions,
-        leaguesByDivision: sortedLeaguesByDivision,
+        divisions: Object.keys(details.divisions),
+        leaguesByDivision: leagueNamesByDivision,
       };
 
       if (String(year) === CURRENT_YEAR) {
